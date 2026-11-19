@@ -99,6 +99,8 @@ describe("SPEC-002 買いサインの判定", () => {
       expect(r.conditions.aboveVwap).toBe(false);
     });
 
+    // 09:40 の足は、自分自身が朝の高値に含まれるので、定義上は朝の高値超えを満たせない。
+    // ここでは「朝の値幅の時間の足では買いサインが出ない」ことだけを確かめる
     it("朝の値幅の時間の足(09:40)は、3条件がそろっても買いサインは出ない", () => {
       const r = evaluateBar({
         ...EXAMPLE,
@@ -131,8 +133,72 @@ describe("SPEC-002 買いサインの判定", () => {
     expect(r.conditions).toEqual({ orbBreakout: false, aboveVwap: true, volumeSurge: true });
     expect(r.met).toBe(2);
     expect(r.buySignal).toBe(false);
+    // 1/3: 取引量の増加だけ(終値 77.0 は朝の高値と平均価格の両方より下)
+    const one = evalWith({}, { close: 77.0 });
+    expect(one.conditions).toEqual({ orbBreakout: false, aboveVwap: false, volumeSurge: true });
+    expect(one.met).toBe(1);
+    expect(one.buySignal).toBe(false);
     const none = evalWith({ pastSameTimeVolumes: [1000] }, { close: 77.0 });
+    expect(none.conditions).toEqual({ orbBreakout: false, aboveVwap: false, volumeSurge: false });
     expect(none.met).toBe(0);
+    expect(none.buySignal).toBe(false);
+  });
+
+  describe("AC-002-05: 時刻の境界(短縮取引日と夏時間)", () => {
+    const onDay = (date: string, utcOffsetHours: number) => {
+      const s = sessionOn(date)!;
+      const [y, mo, d] = date.split("-").map(Number);
+      const mk = (hhmm: string, high: number, low: number, close: number, volume: number, vwap?: number): Bar => {
+        const [h, m] = hhmm.split(":").map(Number);
+        return { start: new Date(Date.UTC(y, mo - 1, d, h + utcOffsetHours, m)), open: close, high, low, close, volume, vwap };
+      };
+      const orb = [
+        mk("09:30", 77.7, 77.1, 77.55, 100, 77.4),
+        mk("09:35", 77.9, 77.4, 77.6, 70, 77.65),
+        mk("09:40", 77.85, 77.35, 77.45, 55, 77.6),
+      ];
+      return { s, mk, orb };
+    };
+
+    it("短縮取引日(2026-11-27)は 12:25 の足なら出て、12:30 の足なら出ない", () => {
+      const { s, mk, orb } = onDay("2026-11-27", 5);
+      const run = (hhmm: string) =>
+        evaluateBar({
+          session: s,
+          barsThroughT: [...orb, mk(hhmm, 78.05, 77.7, 78.0, 120, 77.9)],
+          pastSameTimeVolumes: [60],
+          alreadySignaledToday: false,
+        });
+      expect(run("12:25").buySignal).toBe(true);
+      expect(run("12:30").met).toBe(3);
+      expect(run("12:30").buySignal).toBe(false);
+    });
+
+    it("夏時間の日(2026-10-30)でも例1の 09:45 の足で買いサインが出る", () => {
+      const { s, mk, orb } = onDay("2026-10-30", 4);
+      const r = evaluateBar({
+        session: s,
+        barsThroughT: [...orb, mk("09:45", 78.05, 77.7, 78.0, 120, 77.9)],
+        pastSameTimeVolumes: [60],
+        alreadySignaledToday: false,
+      });
+      expect(r.orbHigh).toBe(77.9);
+      expect(r.buySignal).toBe(true);
+    });
+  });
+
+  it("AC-002-05: 終値と今日の平均価格が等しい時は、小数の誤差があっても満たさない", () => {
+    // すべての足が同じ価格だと、平均価格は終値と等しいはず。
+    // 取引量を各3にすると、45.67 は 45.669999999999995、12.34 は 12.339999999999998 と計算され、
+    // 誤差で「上」と出てしまう(この値は実行して確かめた)
+    for (const price of [45.67, 12.34]) {
+      const flat = [...ORB_BARS, BAR_0945].map((b) => ({
+        ...b, high: price, low: price, close: price, vwap: price, volume: 3,
+      }));
+      const r = evalWith({ barsThroughT: flat });
+      expect(r.vwap).toBeCloseTo(price, 9);
+      expect(r.conditions.aboveVwap, `価格 ${price}`).toBe(false);
+    }
   });
 });
 
@@ -154,10 +220,33 @@ describe("取引量の基準", () => {
 });
 
 describe("朝の値幅", () => {
+  it("09:30 の足が2本あって 09:35 の足がない時は、3本あっても計算しない(null)", () => {
+    expect(openingRange(session, [ORB_BARS[0], { ...ORB_BARS[0] }, ORB_BARS[2]])).toBeNull();
+  });
+
   it("朝の値幅の時間の足が3本そろわない時は、計算できない(null)", () => {
     expect(openingRange(session, ORB_BARS.slice(0, 2))).toBeNull();
     const r = evalWith({ barsThroughT: [ORB_BARS[0], ORB_BARS[2], BAR_0945] });
     expect(r.orbHigh).toBeNull();
     expect(r.conditions.orbBreakout).toBe(false);
+  });
+});
+
+describe("入力の前提", () => {
+  it("足が古い順に並んでいない時はエラーにする", () => {
+    expect(() => evalWith({ barsThroughT: [ORB_BARS[1], ORB_BARS[0], ORB_BARS[2], BAR_0945] })).toThrow(/古い順/);
+  });
+
+  it("同じ時刻の足が重なっている時はエラーにする(平均価格に二重に数えないため)", () => {
+    expect(() => evalWith({ barsThroughT: [...ORB_BARS, BAR_0945, { ...BAR_0945 }] })).toThrow(/重なって/);
+  });
+
+  it("別の日の足が混ざっている時はエラーにする", () => {
+    const nextDay = { ...BAR_0945, start: new Date(BAR_0945.start.getTime() + 24 * 3600_000) };
+    expect(() => evalWith({ barsThroughT: [...ORB_BARS, nextDay] })).toThrow(/取引時間の外/);
+  });
+
+  it("足が0本の時はエラーにする", () => {
+    expect(() => evalWith({ barsThroughT: [] })).toThrow(/足がありません/);
   });
 });
