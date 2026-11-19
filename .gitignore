@@ -1,0 +1,21 @@
+# 依存とビルドの成果物
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# 秘密と、ためたデータ
+.env
+.env.*
+!.env.example
+data/
+
+# テストの成果物
+playwright-report/
+test-results/
+
+# OS とエディタ
+.DS_Store
+*.log
