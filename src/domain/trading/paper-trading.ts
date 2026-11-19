@@ -47,11 +47,16 @@ export type ClosedTrade = {
   pnlJpy: number;
 };
 
+/** 次の取引日から使う設定(定義 12) */
+export type PendingSettings = { principal?: number; fxRate?: number };
+
 export type Account = {
-  /** 元手(円) */
+  /** 元手(円)。日の途中では変わらない */
   principal: number;
-  /** 為替レート(円/ドル) */
+  /** 為替レート(円/ドル)。日の途中では変わらない */
   fxRate: number;
+  /** 日の途中で変えた設定。次の取引日の始めに使い始める */
+  pending: PendingSettings | null;
   /** これまでの損益の合計(円)。日をまたいで引き継ぐ */
   realizedTotalJpy: number;
   /** 今日(米国東部時間の暦日) */
@@ -62,7 +67,7 @@ export type Account = {
 };
 
 export function newAccount(principal: number, fxRate: number, today: string): Account {
-  return { principal, fxRate, realizedTotalJpy: 0, today, realizedTodayJpy: 0, positions: [] };
+  return { principal, fxRate, pending: null, realizedTotalJpy: 0, today, realizedTodayJpy: 0, positions: [] };
 }
 
 /** 残高 = 元手 + これまでの損益の合計(SPEC-003 定義 8) */
@@ -98,9 +103,21 @@ export function pnlJpy(entryPrice: number, exitPrice: number, shares: number, fx
   return (exitPrice - entryPrice) * shares * fxRate;
 }
 
+export type SkipReason =
+  /** 今日の損失の上限に達した(定義 9) */
+  | "daily-loss-limit"
+  /** 買いに使える残りがない、または株数が0(定義 2) */
+  | "no-buying-power"
+  /** 同じ銘柄をすでに持っている(定義 13) */
+  | "already-holding"
+  /** 買う足が新しい買いの締め切り以降に始まる(定義 1) */
+  | "after-entry-cutoff"
+  /** 買値が損切りの価格以下(定義 4) */
+  | "entry-at-or-below-stop";
+
 export type EntryResult =
   | { kind: "entered"; account: Account; position: Position }
-  | { kind: "skipped"; account: Account; reason: "daily-loss-limit" | "no-buying-power" | "already-holding" };
+  | { kind: "skipped"; account: Account; reason: SkipReason };
 
 /**
  * 買いサインの次の足の始値で練習買いする(定義 1、2、4)。
@@ -108,9 +125,15 @@ export type EntryResult =
  */
 export function enter(
   account: Account,
-  input: { symbol: string; nextBar: Bar; stopPrice: number },
+  input: { session: MarketSession; symbol: string; nextBar: Bar; stopPrice: number },
 ): EntryResult {
-  const { symbol, nextBar, stopPrice } = input;
+  const { session, symbol, nextBar, stopPrice } = input;
+  if (nextBar.start.getTime() >= session.entryCutoff.getTime()) {
+    return { kind: "skipped", account, reason: "after-entry-cutoff" };
+  }
+  if (nextBar.open - stopPrice <= EPSILON) {
+    return { kind: "skipped", account, reason: "entry-at-or-below-stop" };
+  }
   if (account.positions.some((p) => p.symbol === symbol)) {
     return { kind: "skipped", account, reason: "already-holding" };
   }
@@ -202,10 +225,61 @@ export function processBar(
   };
 }
 
-/** 次の取引日に切り替える(AC-003-12)。今日の損益は0から始め、残高は引き継ぐ */
+/**
+ * 取引時間が終わったあと、その日に届いた最後の足で残っている株を売る(定義 6、14)。
+ * 最後の足(15:55)が届かなかった時のため。まだ売る判定をしていない足なら、先に判定する。
+ */
+export function settleSessionEnd(
+  account: Account,
+  input: { symbol: string; lastReceivedBar: Bar },
+): BarResult {
+  const { symbol, lastReceivedBar } = input;
+  const p = account.positions.find((x) => x.symbol === symbol);
+  if (!p) return { account, closed: null };
+  if (lastReceivedBar.start.getTime() > p.lastBarStart.getTime()) {
+    return processBar(account, { symbol, bar: lastReceivedBar, isLastBar: true });
+  }
+  const pnl = pnlJpy(p.entryPrice, lastReceivedBar.close, p.shares, account.fxRate);
+  const closed: ClosedTrade = {
+    symbol,
+    entryTime: p.entryTime,
+    entryPrice: p.entryPrice,
+    shares: p.shares,
+    exitTime: lastReceivedBar.start,
+    exitPrice: lastReceivedBar.close,
+    reason: "close",
+    pnlJpy: pnl,
+  };
+  return {
+    account: {
+      ...account,
+      realizedTotalJpy: account.realizedTotalJpy + pnl,
+      realizedTodayJpy: account.realizedTodayJpy + pnl,
+      positions: account.positions.filter((x) => x !== p),
+    },
+    closed,
+  };
+}
+
+/** 元手や為替レートの変更を、次の取引日から使うように取っておく(定義 12) */
+export function scheduleSettings(account: Account, settings: PendingSettings): Account {
+  return { ...account, pending: { ...account.pending, ...settings } };
+}
+
+/**
+ * 次の取引日に切り替える(AC-003-12)。今日の損益は0から始め、残高は引き継ぐ。
+ * 取っておいた元手と為替レートの変更は、ここで使い始める。
+ */
 export function startDay(account: Account, date: string): Account {
   if (account.positions.length > 0) {
-    throw new Error("取引終了で売っていない株があります。日を切り替える前に売る判定を終えてください");
+    throw new Error("取引終了で売っていない株があります。日を切り替える前に settleSessionEnd で売ってください");
   }
-  return { ...account, today: date, realizedTodayJpy: 0 };
+  return {
+    ...account,
+    principal: account.pending?.principal ?? account.principal,
+    fxRate: account.pending?.fxRate ?? account.fxRate,
+    pending: null,
+    today: date,
+    realizedTodayJpy: 0,
+  };
 }

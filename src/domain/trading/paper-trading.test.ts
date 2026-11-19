@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Bar } from "@/domain/market/bar";
 import { sessionOn } from "@/domain/market/market-calendar";
+import { roundYen } from "./round-yen";
 import {
   balanceJpy,
   buyingPowerJpy,
@@ -11,6 +12,8 @@ import {
   newAccount,
   pnlJpy,
   processBar,
+  scheduleSettings,
+  settleSessionEnd,
   sharesFor,
   startDay,
   type Account,
@@ -36,7 +39,7 @@ const fresh = () => newAccount(10_000, 150, DAY);
 
 /** 練習買いして、買った足の売る判定まで終えた口座を返す */
 function bought(entryBar: Bar, stopPrice: number, account: Account = fresh()) {
-  const r = enter(account, { symbol: "TQQQ", nextBar: entryBar, stopPrice });
+  const r = enter(account, { session, symbol: "TQQQ", nextBar: entryBar, stopPrice });
   if (r.kind !== "entered") throw new Error(`買えなかった: ${r.reason}`);
   return processBar(r.account, { symbol: "TQQQ", bar: entryBar, isLastBar: false });
 }
@@ -45,7 +48,7 @@ const pos = (a: Account): Position | undefined => a.positions.find((p) => p.symb
 describe("SPEC-003 自動の練習売買", () => {
   it("AC-003-01: 次の足の始値で、例1の株数(0.4248株、4,998.834円)を買う", () => {
     const next = bar("09:50", 78.45, 78.6, 78.3, 78.5);
-    const r = enter(fresh(), { symbol: "TQQQ", nextBar: next, stopPrice: 77.1 });
+    const r = enter(fresh(), { session, symbol: "TQQQ", nextBar: next, stopPrice: 77.1 });
     expect(r.kind).toBe("entered");
     if (r.kind !== "entered") return;
     expect(r.position.entryPrice).toBe(78.45);
@@ -120,13 +123,13 @@ describe("SPEC-003 自動の練習売買", () => {
     it("今日の損失がちょうど上限(-1,000円)なら、その日は新しく買わない", () => {
       const a = { ...fresh(), realizedTodayJpy: -1000 };
       expect(dailyLossLimitReached(a)).toBe(true);
-      expect(enter(a, { symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 }).kind).toBe("skipped");
+      expect(enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 }).kind).toBe("skipped");
     });
 
     it("今日の損失が上限の手前(-999円)なら、新しく買う", () => {
       const a = { ...fresh(), realizedTodayJpy: -999 };
       expect(dailyLossLimitReached(a)).toBe(false);
-      expect(enter(a, { symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 }).kind).toBe("entered");
+      expect(enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 }).kind).toBe("entered");
     });
 
     it("買いに使える残りが0円なら、買わない", () => {
@@ -134,7 +137,7 @@ describe("SPEC-003 自動の練習売買", () => {
       const holding: Position = { ...p(25), symbol: "SOXL", entryPrice: 50, shares: 10_000 / (50 * 150) };
       const a: Account = { ...fresh(), positions: [holding] };
       expect(buyingPowerJpy(a)).toBeCloseTo(0, 6);
-      const r = enter(a, { symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 });
+      const r = enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 });
       expect(r).toMatchObject({ kind: "skipped", reason: "no-buying-power" });
     });
 
@@ -178,7 +181,7 @@ describe("SPEC-003 自動の練習売買", () => {
 
   it("定義 6: 買った足でも売る判定をする(買った足の安値が損切りの価格に達したら、その足で売る)", () => {
     const entryBar = bar("09:50", 78.45, 78.6, 77.0, 77.3);
-    const r = enter(fresh(), { symbol: "TQQQ", nextBar: entryBar, stopPrice: 77.1 });
+    const r = enter(fresh(), { session, symbol: "TQQQ", nextBar: entryBar, stopPrice: 77.1 });
     if (r.kind !== "entered") throw new Error("買えなかった");
     const sold = processBar(r.account, { symbol: "TQQQ", bar: entryBar, isLastBar: false });
     expect(sold.closed).toMatchObject({ exitPrice: 77.1, reason: "stop", exitTime: at("09:50") });
@@ -187,7 +190,7 @@ describe("SPEC-003 自動の練習売買", () => {
   it("AC-003-08: 今日の損失が上限に達したら新しく買わず、持っている株の売りは続ける", () => {
     let { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
     account = { ...account, realizedTodayJpy: -1000 };
-    const r = enter(account, { symbol: "SOXL", nextBar: bar("10:00", 25, 25, 25, 25), stopPrice: 24 });
+    const r = enter(account, { session, symbol: "SOXL", nextBar: bar("10:00", 25, 25, 25, 25), stopPrice: 24 });
     expect(r).toMatchObject({ kind: "skipped", reason: "daily-loss-limit" });
     const sold = processBar(account, { symbol: "TQQQ", bar: bar("10:00", 77.5, 77.6, 77.0, 77.2), isLastBar: false });
     expect(sold.closed?.reason).toBe("stop");
@@ -254,7 +257,7 @@ describe("株数の切り捨て", () => {
 describe("1回の買いの予算", () => {
   it("残高が減っても、予算は元手の50%(5,000円)が上限のまま", () => {
     const a = { ...fresh(), realizedTotalJpy: -2000 };
-    const r = enter(a, { symbol: "TQQQ", nextBar: bar("10:00", 50, 50, 50, 50), stopPrice: 49 });
+    const r = enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 50, 50, 50, 50), stopPrice: 49 });
     if (r.kind !== "entered") throw new Error("買えなかった");
     expect(r.position.shares).toBe(sharesFor(5000, 50, 150));
   });
@@ -264,8 +267,78 @@ describe("1回の買いの予算", () => {
       symbol: "SOXL", entryTime: at("09:50"), entryPrice: 50, shares: 7000 / (50 * 150), stopPrice: 49, peak: 50, lastBarStart: at("09:50"),
     };
     const a: Account = { ...fresh(), positions: [holding] };
-    const r = enter(a, { symbol: "TQQQ", nextBar: bar("10:00", 50, 50, 50, 50), stopPrice: 49 });
+    const r = enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 50, 50, 50, 50), stopPrice: 49 });
     if (r.kind !== "entered") throw new Error("買えなかった");
     expect(r.position.shares).toBe(sharesFor(3000, 50, 150));
+  });
+});
+
+describe("SPEC-003 決めたこと(2026-11-19、PR #4 のレビューで追記)", () => {
+  it("定義 1: 買う足が新しい買いの締め切り(15:30)以降に始まるなら買わない", () => {
+    // 15:25 の足で買いサインが出ると、買う足は 15:30
+    const r = enter(fresh(), { session, symbol: "TQQQ", nextBar: bar("15:30", 78, 78, 78, 78), stopPrice: 77 });
+    expect(r).toMatchObject({ kind: "skipped", reason: "after-entry-cutoff" });
+    const ok = enter(fresh(), { session, symbol: "TQQQ", nextBar: bar("15:25", 78, 78, 78, 78), stopPrice: 77 });
+    expect(ok.kind).toBe("entered");
+  });
+
+  it("定義 1: 短縮取引日(2026-11-27)は 12:30 に始まる足では買わない", () => {
+    const early = sessionOn("2026-11-27")!;
+    const b = (iso: string): Bar => ({ start: new Date(iso), open: 78, high: 78, low: 78, close: 78, volume: 1 });
+    expect(enter(fresh(), { session: early, symbol: "TQQQ", nextBar: b("2026-11-27T17:30:00Z"), stopPrice: 77 }).kind).toBe("skipped");
+    expect(enter(fresh(), { session: early, symbol: "TQQQ", nextBar: b("2026-11-27T17:25:00Z"), stopPrice: 77 }).kind).toBe("entered");
+  });
+
+  it("定義 4: 買値が損切りの価格以下なら買わない(同じ値も買わない)", () => {
+    const below = enter(fresh(), { session, symbol: "TQQQ", nextBar: bar("09:50", 77.0, 77.2, 76.9, 77.1), stopPrice: 77.1 });
+    expect(below).toMatchObject({ kind: "skipped", reason: "entry-at-or-below-stop" });
+    const equal = enter(fresh(), { session, symbol: "TQQQ", nextBar: bar("09:50", 77.1, 77.2, 77.0, 77.1), stopPrice: 77.1 });
+    expect(equal).toMatchObject({ kind: "skipped", reason: "entry-at-or-below-stop" });
+  });
+
+  it("定義 14: 最後の足が届かなかった時は、その日に届いた最後の足の終値で売る", () => {
+    let { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
+    const lastReceived = bar("15:45", 78.5, 78.7, 78.4, 78.6);
+    account = processBar(account, { symbol: "TQQQ", bar: lastReceived, isLastBar: false }).account;
+    // 15:50 と 15:55 の足が届かないまま取引時間が終わった
+    const r = settleSessionEnd(account, { symbol: "TQQQ", lastReceivedBar: lastReceived });
+    expect(r.closed).toMatchObject({ exitPrice: 78.6, reason: "close", exitTime: at("15:45") });
+    expect(r.account.positions).toHaveLength(0);
+    expect(() => startDay(r.account, "2026-11-03")).not.toThrow();
+  });
+
+  it("定義 14: まだ判定していない足なら、先に売る判定をする(損切りが先)", () => {
+    const { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
+    const r = settleSessionEnd(account, { symbol: "TQQQ", lastReceivedBar: bar("15:45", 77.5, 77.6, 77.0, 77.4) });
+    expect(r.closed).toMatchObject({ exitPrice: 77.1, reason: "stop" });
+  });
+
+  it("定義 12: 日の途中で変えた為替レートと元手は、次の取引日から使う", () => {
+    let { account } = bought(bar("09:50", 25.0, 25.2, 24.9, 25.1), 24.5);
+    account = scheduleSettings(account, { fxRate: 100, principal: 20_000 });
+    // 今日はまだ 150 円、元手 10,000円のまま
+    expect(account.fxRate).toBe(150);
+    expect(account.principal).toBe(10_000);
+    const sold = processBar(account, { symbol: "TQQQ", bar: bar("15:55", 26, 26, 26, 26), isLastBar: true });
+    expect(sold.closed?.pnlJpy).toBeCloseTo(1 * 1.3333 * 150, 6);
+    const next = startDay(sold.account, "2026-11-03");
+    expect(next.fxRate).toBe(100);
+    expect(next.principal).toBe(20_000);
+    expect(next.pending).toBeNull();
+  });
+
+  it("定義 13: 同じ銘柄の株をすでに持っている時は買わない", () => {
+    const { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
+    const r = enter(account, { session, symbol: "TQQQ", nextBar: bar("10:30", 79, 79, 79, 79), stopPrice: 77.1 });
+    expect(r).toMatchObject({ kind: "skipped", reason: "already-holding" });
+  });
+
+  it("定義 7: 画面の円は、負の値も絶対値で四捨五入する(-86.5 は -87)", () => {
+    expect(roundYen(-86.5)).toBe(-87);
+    expect(roundYen(86.5)).toBe(87);
+    expect(roundYen(-86.022)).toBe(-86);
+    expect(roundYen(199.195)).toBe(199);
+    expect(roundYen(-0.4)).toBe(0);
+    expect(Object.is(roundYen(-0.4), -0)).toBe(false);
   });
 });
