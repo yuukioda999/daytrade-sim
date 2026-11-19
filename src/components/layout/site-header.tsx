@@ -22,8 +22,9 @@ export function SiteHeader() {
                   aria-current={current ? "page" : undefined}
                   className={cn(
                     "inline-flex min-h-11 items-center rounded-lg px-3.5",
+                    // 今いる画面は、背景と太字に加えて下線(形)でも示す
                     current
-                      ? "bg-muted font-semibold text-fg"
+                      ? "bg-muted font-semibold text-fg shadow-[inset_0_-2px_0_var(--color-accent)]"
                       : "text-fg-muted hover:text-fg",
                   )}
                 >

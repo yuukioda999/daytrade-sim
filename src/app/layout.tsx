@@ -23,7 +23,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           本文へ移動
         </a>
         <SiteHeader />
-        <main id="main" className="mx-auto w-full max-w-[1392px] flex-1 p-6">
+        {/* tabIndex={-1}: 本文へ移動のリンクで、フォーカスを本文に移すため */}
+        <main
+          id="main"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[1392px] flex-1 p-6 focus:outline-none"
+        >
           {children}
         </main>
         <SiteFooter />

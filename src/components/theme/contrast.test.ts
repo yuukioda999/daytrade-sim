@@ -15,6 +15,7 @@ const TEXT_PAIRS: ReadonlyArray<[fg: string, bg: string]> = [
   ["fg", "surface"],
   ["fg", "surface-2"],
   ["fg", "muted"],
+  ["fg-sub", "bg"],
   ["fg-sub", "surface"],
   ["fg-muted", "bg"],
   ["fg-muted", "surface"],
@@ -29,6 +30,12 @@ const TEXT_PAIRS: ReadonlyArray<[fg: string, bg: string]> = [
   ["warn-fg", "warn"],
 ];
 
+/** 文字ではない目印(今いる画面の下線など)と、その背景。WCAG の 3:1 で確かめる。 */
+const NON_TEXT_PAIRS: ReadonlyArray<[mark: string, bg: string]> = [
+  ["accent", "muted"],
+  ["accent", "surface-2"],
+];
+
 describe("テーマの色", () => {
   it("AC-007-03: 計算が WCAG の既知の値と合う(白と黒は 21:1)", () => {
     expect(contrastRatio("#ffffff", "#000000")).toBeCloseTo(21, 5);
@@ -41,6 +48,15 @@ describe("テーマの色", () => {
       expect(colors[fg], `--color-${fg} が globals.css にない`).toBeDefined();
       expect(colors[bg], `--color-${bg} が globals.css にない`).toBeDefined();
       expect(contrastRatio(colors[fg], colors[bg])).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each(NON_TEXT_PAIRS)(
+    "AC-007-03: 目印 %s と背景 %s の比が 3:1 以上",
+    (mark, bg) => {
+      expect(colors[mark], `--color-${mark} が globals.css にない`).toBeDefined();
+      expect(colors[bg], `--color-${bg} が globals.css にない`).toBeDefined();
+      expect(contrastRatio(colors[mark], colors[bg])).toBeGreaterThanOrEqual(3);
     },
   );
 });
