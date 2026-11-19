@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/*
+ * 色はここだけで決める。文字と背景の組み合わせの比は
+ * src/components/theme/contrast.test.ts で WCAG AA を確かめている(AC-007-03)。
+ */
+@theme {
+  --color-bg: #0b0f14;
+  --color-surface: #111823;
+  --color-surface-2: #0e141c;
+  --color-muted: #1a2533;
+  --color-border: #223042;
+  --color-fg: #e6edf3;
+  --color-fg-sub: #b6c2d1;
+  --color-fg-muted: #93a1b3;
+  --color-accent: #5aa9ff;
+  --color-accent-fg: #06121f;
+  --color-accent-soft: #8cc4ff;
+  --color-up: #3dd68c;
+  --color-down: #ff7b72;
+  --color-warn: #f2b84b;
+  --color-warn-fg: #1a1203;
+
+  --font-sans:
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI",
+    system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
