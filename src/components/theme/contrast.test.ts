@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { contrastRatio, parseThemeColors } from "./contrast";
+import { blend, contrastRatio, parseThemeColors } from "./contrast";
 
 const css = readFileSync(
   fileURLToPath(new URL("../../app/globals.css", import.meta.url)),
@@ -17,6 +17,7 @@ const TEXT_PAIRS: ReadonlyArray<[fg: string, bg: string]> = [
   ["fg", "muted"],
   ["fg-sub", "bg"],
   ["fg-sub", "surface"],
+  ["fg-sub", "muted"],
   ["fg-muted", "bg"],
   ["fg-muted", "surface"],
   ["fg-muted", "surface-2"],
@@ -36,7 +37,25 @@ const NON_TEXT_PAIRS: ReadonlyArray<[mark: string, bg: string]> = [
   ["accent", "surface-2"],
 ];
 
+/** 半透明の背景(背景の色 / 不透明度)の上の文字。ヘッダーの市場の状態の表示で使う。 */
+const TINTED_PAIRS: ReadonlyArray<[fg: string, tint: string, alpha: number, base: string]> = [
+  ["up", "up", 0.15, "surface-2"],
+  ["warn", "warn", 0.15, "surface-2"],
+];
+
 describe("テーマの色", () => {
+  it.each(TINTED_PAIRS)(
+    "AC-007-03: 文字 %s と背景(%s を %s で surface-2 に重ねた色)の比が 4.5:1 以上",
+    (fg, tint, alpha, base) => {
+      const bg = blend(colors[tint], colors[base], alpha);
+      expect(contrastRatio(colors[fg], bg)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("AC-007-03: 色を重ねる計算が合う(白を 50% で黒に重ねると #808080)", () => {
+    expect(blend("#ffffff", "#000000", 0.5)).toBe("#808080");
+  });
+
   it("AC-007-03: 計算が WCAG の既知の値と合う(白と黒は 21:1)", () => {
     expect(contrastRatio("#ffffff", "#000000")).toBeCloseTo(21, 5);
     expect(contrastRatio("#777777", "#ffffff")).toBeCloseTo(4.48, 2);

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/components/ui/cn";
+import { MarketStatus } from "./market-status";
 import { NAV_ITEMS } from "./nav-items";
 
 export function SiteHeader() {
@@ -35,6 +36,9 @@ export function SiteHeader() {
           })}
         </ul>
       </nav>
+      <div className="ml-auto">
+        <MarketStatus />
+      </div>
     </header>
   );
 }

@@ -9,6 +9,9 @@ export default defineConfig({
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: `http://localhost:${PORT}`,
+    // 利用者は日本時間の Mac で使うので、ブラウザのタイムゾーンを日本に合わせる
+    timezoneId: "Asia/Tokyo",
+    locale: "ja-JP",
     trace: "retain-on-failure",
     // Playwright のブラウザを入れられない環境だけ、手元の Chrome を指定する
     launchOptions: process.env.PW_CHROME_PATH
