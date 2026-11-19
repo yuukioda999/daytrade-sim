@@ -19,3 +19,7 @@ test-results/
 # OS とエディタ
 .DS_Store
 *.log
+
+# Next.js が生成するもの
+next-env.d.ts
+.vercel

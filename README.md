@@ -16,6 +16,18 @@
 - 機能の仕様: [docs/spec/](docs/spec/)(作成中)
 - AI 駆動開発の記録: [docs/ai-log/](docs/ai-log/)
 
+## 開発の始め方
+
+Node.js 22 以上が要ります(`.nvmrc` に書いてあります)。
+
+```bash
+npm install
+npm run dev          # http://localhost:3000
+npm test             # 単体テスト
+npx playwright install chromium   # 初回だけ
+npm run test:e2e     # 画面のテスト
+```
+
 ## これから書くこと
 
 アーキテクチャ、セットアップ、機能一覧は、実装に合わせて書きます。
