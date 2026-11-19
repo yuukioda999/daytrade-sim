@@ -1,0 +1,34 @@
+# 下書き。package.json と各スクリプトができてから有効になる。
+# アクションの版と Node.js の版は、導入する時に最新を確かめて直す(2026-11-17 時点では未確認)。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: 型チェック
+        run: npm run typecheck
+      - name: lint
+        run: npm run lint
+      - name: 単体テスト
+        run: npm run test
+      - name: 画面のテストの準備
+        run: npx playwright install --with-deps chromium
+      - name: 画面のテスト
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
