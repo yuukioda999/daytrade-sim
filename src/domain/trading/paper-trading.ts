@@ -39,6 +39,7 @@ export type ClosedTrade = {
   entryTime: Date;
   entryPrice: number;
   shares: number;
+  /** 売った足の開始時刻。取引終了で売った時も、終値の時刻(16:00)ではなく最後の足の開始時刻(15:55) */
   exitTime: Date;
   exitPrice: number;
   reason: ExitReason;

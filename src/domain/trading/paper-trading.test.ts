@@ -100,6 +100,17 @@ describe("SPEC-003 自動の練習売買", () => {
       expect(exitThreshold(p(26.24))).toEqual({ price: 24.5, reason: "stop" });
     });
 
+    it("+5% の境界は、小数の誤差が出る値でも有効になる(1.02 × 1.05 は 1.0710000000000002 と計算される)", () => {
+      const q: Position = { ...p(1.071), entryPrice: 1.02, stopPrice: 0.9 };
+      expect(exitThreshold(q).reason).toBe("trailing");
+    });
+
+    it("目安が有効でも、目安が損切りの価格以下なら、基準は損切りの価格(max)", () => {
+      // e=25、s=25.5、m=26.25 で目安 t=25.4625 は s=25.5 より下
+      const q: Position = { ...p(26.25), stopPrice: 25.5 };
+      expect(exitThreshold(q)).toEqual({ price: 25.5, reason: "stop" });
+    });
+
     it("安値が売りの基準と同じなら売る", () => {
       const { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
       const r = processBar(account, { symbol: "TQQQ", bar: bar("09:55", 77.5, 77.6, 77.1, 77.3), isLastBar: false });
@@ -152,10 +163,25 @@ describe("SPEC-003 自動の練習売買", () => {
     expect(r.account.positions).toHaveLength(0);
   });
 
+  it("AC-003-07: 最後の足で安値が損切りの価格に達したら、取引終了ではなく損切りで売る", () => {
+    const { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
+    // 始値 77.50、安値 77.00、終値 78.00。取引終了を先に判定すると 78.00 で売ってしまう
+    const r = processBar(account, { symbol: "TQQQ", bar: bar("15:55", 77.5, 78.1, 77.0, 78.0), isLastBar: true });
+    expect(r.closed).toMatchObject({ exitPrice: 77.1, reason: "stop" });
+  });
+
   it("AC-003-07: 短縮取引日(2026-11-27)の最後の足は 12:55", () => {
     const early = sessionOn("2026-11-27")!;
     const b: Bar = { start: new Date("2026-11-27T17:55:00Z"), open: 1, high: 1, low: 1, close: 1, volume: 1 };
     expect(isLastBarOfSession(early, b)).toBe(true);
+  });
+
+  it("定義 6: 買った足でも売る判定をする(買った足の安値が損切りの価格に達したら、その足で売る)", () => {
+    const entryBar = bar("09:50", 78.45, 78.6, 77.0, 77.3);
+    const r = enter(fresh(), { symbol: "TQQQ", nextBar: entryBar, stopPrice: 77.1 });
+    if (r.kind !== "entered") throw new Error("買えなかった");
+    const sold = processBar(r.account, { symbol: "TQQQ", bar: entryBar, isLastBar: false });
+    expect(sold.closed).toMatchObject({ exitPrice: 77.1, reason: "stop", exitTime: at("09:50") });
   });
 
   it("AC-003-08: 今日の損失が上限に達したら新しく買わず、持っている株の売りは続ける", () => {
@@ -172,6 +198,8 @@ describe("SPEC-003 自動の練習売買", () => {
     const b = bar("09:55", 77.5, 77.6, 77.0, 77.2);
     const first = processBar(account, { symbol: "TQQQ", bar: b, isLastBar: false });
     expect(first.closed).not.toBeNull();
+    // 売ったあとの口座に同じ足をもう一度渡しても、2回目の記録はできない
+    expect(processBar(first.account, { symbol: "TQQQ", bar: b, isLastBar: false }).closed).toBeNull();
     // 売る前の口座に同じ足をもう一度渡しても、2回目の判定でずれない
     const holdBar = bar("09:55", 78.5, 78.7, 78.4, 78.6);
     const once = processBar(account, { symbol: "TQQQ", bar: holdBar, isLastBar: false });
@@ -211,6 +239,10 @@ describe("株数の切り捨て", () => {
   it("割り切れる時は、誤差で1つ少なく切り捨てない", () => {
     expect(sharesFor(5000, 50, 100)).toBe(1);
     expect(sharesFor(4500, 0.3, 150)).toBe(100);
+  });
+
+  it("小数の誤差で 6.9999株にならず、7株になる(73.5円 / (0.07ドル × 150) は 6.999999999999999 と計算される)", () => {
+    expect(sharesFor(73.5, 0.07, 150)).toBe(7);
   });
 
   it("予算か価格が0以下なら0株", () => {
