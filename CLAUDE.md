@@ -61,7 +61,7 @@ src/
   components/      画面の部品
   domain/          条件の判定、損益、複利と税金などの純粋関数
   application/     ユースケース
-  infrastructure/  Alpaca、SQLite、時計、市場カレンダーのアダプタ
+  infrastructure/  Alpaca、SQLite、時計のアダプタ(市場カレンダーは domain/market にある)
   worker/          自動の練習売買を動かすプロセス
 e2e/               Playwright の画面テスト
 data/              SQLite のファイル(コミットしない)
