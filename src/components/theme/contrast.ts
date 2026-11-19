@@ -22,6 +22,20 @@ export function contrastRatio(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** 色 color を不透明度 alpha で背景 bg に重ねた時の色(Tailwind の bg-up/15 など)。 */
+export function blend(color: string, bg: string, alpha: number): string {
+  const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const c = rgb(color);
+  const b = rgb(bg);
+  return (
+    "#" +
+    c
+      .map((v, i) => Math.round(v * alpha + b[i] * (1 - alpha)))
+      .map((v) => v.toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
 /** globals.css の @theme から `--color-名前: #rrggbb;` を読み取る。 */
 export function parseThemeColors(css: string): Record<string, string> {
   const colors: Record<string, string> = {};
