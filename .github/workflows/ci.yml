@@ -22,6 +22,10 @@ jobs:
         run: npm run lint
       - name: 単体テスト
         run: npm test
+      - name: 単体テスト(日本時間の環境で)
+        run: npm test
+        env:
+          TZ: Asia/Tokyo
       - name: 画面のテストの準備
         run: npx playwright install --with-deps chromium
       - name: 画面のテスト(本番と同じビルドで確かめる)

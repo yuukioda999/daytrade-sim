@@ -32,6 +32,18 @@ const CASES = [
   },
 ] as const;
 
+test("AC-001-13: 09:29 から 09:30 になると、すぐ「開いています」に変わる", async ({ page }) => {
+  // 分の境目からずらした時刻で始め、時計を止める。止めないと、待つ間に実時間で進んでしまう
+  await page.clock.install({ time: new Date("2026-11-02T14:29:07Z") });
+  await page.goto("/");
+  await page.clock.pauseAt(new Date("2026-11-02T14:29:50Z"));
+  const status = page.getByTestId("market-status");
+  await expect(status).toContainText("市場は閉まっています");
+  await page.clock.runFor(11_000); // 09:30:01 まで進める
+  await expect(status).toContainText("市場は開いています");
+  await expect(status).toContainText("米国東部 09:30(冬時間)");
+});
+
 for (const c of CASES) {
   test(`${c.id}: ${c.name}(${c.at})のヘッダーの表示`, async ({ page }) => {
     await page.clock.setFixedTime(new Date(c.at));

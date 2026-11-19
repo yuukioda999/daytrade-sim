@@ -68,10 +68,12 @@ export function isMarketOpen(instant: Date): boolean {
   return session.open.getTime() <= t && t < session.close.getTime();
 }
 
-/** 朝の値幅の時間に始まる足の開始時刻(5分足なら 09:30、09:35、09:40)。 */
-export function orbBarStarts(session: MarketSession, barMinutes = 5): Date[] {
+const BAR_MS = 5 * 60_000;
+
+/** 朝の値幅の時間に始まる5分足の開始時刻(09:30、09:35、09:40)。 */
+export function orbBarStarts(session: MarketSession): Date[] {
   const starts: Date[] = [];
-  for (let t = session.open.getTime(); t < session.orbEnd.getTime(); t += barMinutes * 60_000) {
+  for (let t = session.open.getTime(); t < session.orbEnd.getTime(); t += BAR_MS) {
     starts.push(new Date(t));
   }
   return starts;

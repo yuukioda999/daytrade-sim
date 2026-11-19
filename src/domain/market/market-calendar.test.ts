@@ -62,6 +62,22 @@ describe("SPEC-001 市場の時間", () => {
     expect(sessionOn("2026-11-27")?.earlyClose).toBe(true);
   });
 
+  it.each([
+    ["2026-12-24", "2026-12-24T18:00:00.000Z", "2026-12-24T17:30:00.000Z"],
+    ["2027-11-26", "2027-11-26T18:00:00.000Z", "2027-11-26T17:30:00.000Z"],
+  ])("AC-001-09、AC-001-11: 短縮取引日 %s は 13:00 終了、12:30 締め切り", (date, close, cutoff) => {
+    const s = sessionOn(date)!;
+    expect(s.earlyClose).toBe(true);
+    expect(iso(s.close)).toBe(close);
+    expect(iso(s.entryCutoff)).toBe(cutoff);
+  });
+
+  it("AC-001-03: 2027 年の夏時間の平日(2027-07-06)も 09:30 = 13:30Z に開く", () => {
+    expect(isMarketOpen(at("2027-07-06T13:29:59Z"))).toBe(false);
+    expect(isMarketOpen(at("2027-07-06T13:30:00Z"))).toBe(true);
+    expect(isDaylightSaving(at("2027-07-06T13:30:00Z"))).toBe(true);
+  });
+
   it("AC-001-10: 朝の値幅の時間は 09:30、09:35、09:40 に始まる3本", () => {
     const winter = sessionOn("2026-11-02")!;
     expect(orbBarStarts(winter).map(iso)).toEqual([
@@ -109,6 +125,9 @@ describe("休場日の表", () => {
   it("米国東部時間の夜は、UTC では翌日でも東部の暦日で判定する", () => {
     // 2026-11-02 22:00 ET = 2026-11-03T03:00Z
     expect(toEastern(at("2026-11-03T03:00:00Z")).date).toBe("2026-11-02");
-    expect(isMarketOpen(at("2026-11-03T03:00:00Z"))).toBe(false);
+    // 年の境目: 2027-12-31 23:30 ET は UTC では 2028-01-01。
+    // UTC の日付で判定すると、表にない 2028 年としてエラーになる
+    expect(() => isMarketOpen(at("2028-01-01T04:30:00Z"))).not.toThrow();
+    expect(isMarketOpen(at("2028-01-01T04:30:00Z"))).toBe(false);
   });
 });

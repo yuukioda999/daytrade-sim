@@ -4,26 +4,38 @@
  */
 export const MARKET_TIME_ZONE = "America/New_York";
 
-const offsetFormat = new Intl.DateTimeFormat("en-US", {
-  timeZone: MARKET_TIME_ZONE,
-  timeZoneName: "longOffset",
-});
+let offsetFormat: Intl.DateTimeFormat | undefined;
+let partsFormat: Intl.DateTimeFormat | undefined;
 
-const partsFormat = new Intl.DateTimeFormat("en-CA", {
-  timeZone: MARKET_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hourCycle: "h23",
-  weekday: "short",
-});
+// Intl は使う時に作る。対応していない環境では、読み込み時ではなく呼んだ時にエラーになる
+function getOffsetFormat(): Intl.DateTimeFormat {
+  offsetFormat ??= new Intl.DateTimeFormat("en-US", {
+    timeZone: MARKET_TIME_ZONE,
+    timeZoneName: "longOffset",
+  });
+  return offsetFormat;
+}
+
+function getPartsFormat(): Intl.DateTimeFormat {
+  partsFormat ??= new Intl.DateTimeFormat("en-CA", {
+    timeZone: MARKET_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+    weekday: "short",
+  });
+  return partsFormat;
+}
 
 /** その瞬間の、UTC からのずれ(分)。冬時間は -300、夏時間は -240。 */
 export function easternOffsetMinutes(instant: Date): number {
-  const name = offsetFormat.formatToParts(instant).find((p) => p.type === "timeZoneName")?.value;
+  const name = getOffsetFormat()
+    .formatToParts(instant)
+    .find((p) => p.type === "timeZoneName")?.value;
   const m = /^GMT([+-])(\d{2}):(\d{2})$/.exec(name ?? "");
   if (!m) throw new Error(`タイムゾーンのずれを読み取れない: ${name}`);
   const minutes = Number(m[2]) * 60 + Number(m[3]);
@@ -46,14 +58,21 @@ export type EasternParts = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+function weekdayIndex(name: string | undefined): number {
+  const i = WEEKDAYS.indexOf(name ?? "");
+  // 読み取れない時に平日として扱うと、休みの日を開いていると誤るので止める
+  if (i < 0) throw new Error(`曜日を読み取れない: ${name}`);
+  return i;
+}
+
 export function toEastern(instant: Date): EasternParts {
-  const p = Object.fromEntries(partsFormat.formatToParts(instant).map((x) => [x.type, x.value]));
+  const p = Object.fromEntries(getPartsFormat().formatToParts(instant).map((x) => [x.type, x.value]));
   return {
     date: `${p.year}-${p.month}-${p.day}`,
     hour: Number(p.hour),
     minute: Number(p.minute),
     second: Number(p.second),
-    weekday: WEEKDAYS.indexOf(p.weekday),
+    weekday: weekdayIndex(p.weekday),
   };
 }
 
