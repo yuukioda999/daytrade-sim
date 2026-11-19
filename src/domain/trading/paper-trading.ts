@@ -1,5 +1,5 @@
 import type { Bar } from "@/domain/market/bar";
-import type { MarketSession } from "@/domain/market/market-calendar";
+import { sessionOn, type MarketSession } from "@/domain/market/market-calendar";
 
 /** 1回の買いに使う予算の、元手に対する割合(SPEC-003 決めたこと 5) */
 export const BUDGET_RATIO = 0.5;
@@ -236,8 +236,16 @@ export function settleSessionEnd(
   const { symbol, lastReceivedBar } = input;
   const p = account.positions.find((x) => x.symbol === symbol);
   if (!p) return { account, closed: null };
-  if (lastReceivedBar.start.getTime() > p.lastBarStart.getTime()) {
+  const barTime = lastReceivedBar.start.getTime();
+  const lastTime = p.lastBarStart.getTime();
+  if (barTime > lastTime) {
     return processBar(account, { symbol, bar: lastReceivedBar, isLastBar: true });
+  }
+  if (barTime < lastTime) {
+    // すでに判定した足より前の足で売ると、売った時刻が実際の流れと合わなくなる
+    throw new Error(
+      `${symbol} は ${p.lastBarStart.toISOString()} の足まで判定済みです。それより前の足(${lastReceivedBar.start.toISOString()})では売れません`,
+    );
   }
   const pnl = pnlJpy(p.entryPrice, lastReceivedBar.close, p.shares, account.fxRate);
   const closed: ClosedTrade = {
@@ -271,6 +279,13 @@ export function scheduleSettings(account: Account, settings: PendingSettings): A
  * 取っておいた元手と為替レートの変更は、ここで使い始める。
  */
 export function startDay(account: Account, date: string): Account {
+  // 同じ日や過去の日に切り替えると、今日の損益が0に戻り、損失の上限や設定の切り替えが崩れる
+  if (date <= account.today) {
+    throw new Error(`次の取引日は今日(${account.today})より後の日にしてください: ${date}`);
+  }
+  if (sessionOn(date) === null) {
+    throw new Error(`${date} は取引日ではありません`);
+  }
   if (account.positions.length > 0) {
     throw new Error("取引終了で売っていない株があります。日を切り替える前に settleSessionEnd で売ってください");
   }
