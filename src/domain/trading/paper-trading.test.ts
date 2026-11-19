@@ -336,7 +336,7 @@ describe("SPEC-003 決めたこと(2026-11-19、PR #4 のレビューで追記)"
     expect(r.closed).toMatchObject({ exitPrice: 77.1, reason: "stop" });
   });
 
-  it("定義 12: 日の途中で変えた為替レートと元手は、次の取引日から使う", () => {
+  it("AC-003-13: 日の途中で変えた為替レートと元手は、次の取引日から使う", () => {
     let { account } = bought(bar("09:50", 25.0, 25.2, 24.9, 25.1), 24.5);
     account = scheduleSettings(account, { fxRate: 100, principal: 20_000 });
     // 今日はまだ 150 円、元手 10,000円のまま
@@ -350,7 +350,7 @@ describe("SPEC-003 決めたこと(2026-11-19、PR #4 のレビューで追記)"
     expect(next.pending).toBeNull();
   });
 
-  it("定義 12: 元手だけ、為替だけを別々に取っておいても、次の取引日に両方使う", () => {
+  it("AC-003-13: 元手だけ、為替だけを別々に取っておいても、次の取引日に両方使う", () => {
     let a = scheduleSettings(fresh(), { principal: 20_000 });
     a = scheduleSettings(a, { fxRate: 100 });
     expect(a.pending).toEqual({ principal: 20_000, fxRate: 100 });
@@ -358,12 +358,12 @@ describe("SPEC-003 決めたこと(2026-11-19、PR #4 のレビューで追記)"
     expect(next).toMatchObject({ principal: 20_000, fxRate: 100, pending: null });
   });
 
-  it("定義 12: 元手だけ変えた時は、為替レートはそのまま", () => {
+  it("AC-003-13: 元手だけ変えた時は、為替レートはそのまま", () => {
     const next = startDay(scheduleSettings(fresh(), { principal: 20_000 }), "2026-11-03");
     expect(next).toMatchObject({ principal: 20_000, fxRate: 150 });
   });
 
-  it("定義 12: 元手の変更を取っておいても、その日の買いの予算は 5,000円のまま", () => {
+  it("AC-003-13: 元手の変更を取っておいても、その日の買いの予算は 5,000円のまま", () => {
     const a = scheduleSettings(fresh(), { principal: 20_000 });
     const r = enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 50, 50, 50, 50), stopPrice: 49 });
     if (r.kind !== "entered") throw new Error("買えなかった");
@@ -385,7 +385,7 @@ describe("SPEC-003 決めたこと(2026-11-19、PR #4 のレビューで追記)"
     expect(enter(fresh(), { session: summer, symbol: "TQQQ", nextBar: b("2026-07-01T19:25:00Z"), stopPrice: 77 }).kind).toBe("entered");
   });
 
-  it("定義 13: 同じ銘柄の株をすでに持っている時は買わない", () => {
+  it("AC-003-14: 同じ銘柄の株をすでに持っている時は買わない", () => {
     const { account } = bought(bar("09:50", 78.45, 78.6, 78.3, 78.5), 77.1);
     const r = enter(account, { session, symbol: "TQQQ", nextBar: bar("10:30", 79, 79, 79, 79), stopPrice: 77.1 });
     expect(r).toMatchObject({ kind: "skipped", reason: "already-holding" });
