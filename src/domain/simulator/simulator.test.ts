@@ -66,6 +66,28 @@ describe("SPEC-005 資産シミュレーター", () => {
       expect(r.rows[0].balanceJpy).toBeCloseTo(10_000 * 1.003 ** 180, 6);
     });
 
+    it("税金 OFF なら、3つの条件のどれも税金が 0 で、運用中の値が高精度の計算と一致", () => {
+      // 参照の値は Python の Decimal で求めた1年目の運用中と貯金
+      const c = compareScenarios({ ...base, years: 1, taxOn: false });
+      const expected = {
+        withTrial: [15_002.341616, 2143.860693],
+        noTrial: [17_365.540303, 3156.66013],
+        fullCompound: [20_522.200433, 0],
+      } as const;
+      for (const key of ["withTrial", "noTrial", "fullCompound"] as const) {
+        const row = c[key].rows[0];
+        expect(row.taxJpy, key).toBe(0);
+        expect(row.balanceJpy, key).toBeCloseTo(expected[key][0], 4);
+        expect(row.savingsJpy, key).toBeCloseTo(expected[key][1], 4);
+      }
+    });
+
+    it("貯金へ回す割合 100% でも計算でき、利益(税引き後)の全部が貯金になる", () => {
+      const r = simulateScenario({ ...base, trialMonths: 0, years: 1, savingsRatio: 1 });
+      expect(r.rows[0].balanceJpy).toBeCloseTo(10_000, 9);
+      expect(r.rows[0].savingsJpy).toBeCloseTo((20_522.200433 - 10_000) * (1 - 0.20315), 4);
+    });
+
     it("上限(1%、10年)でも、無限大や非数にならない", () => {
       const c = compareScenarios({ ...base, dailyRate: 0.01, years: 10 });
       for (const s of [c.withTrial, c.noTrial, c.fullCompound]) {
@@ -79,7 +101,7 @@ describe("SPEC-005 資産シミュレーター", () => {
     });
   });
 
-  it("AC-005-04 の前提: 既定値で3つの条件の年次の値が、高精度の計算の値と小数2桁まで一致", () => {
+  it("既定値で3つの条件の年次の値が、高精度の計算の値と小数2桁まで一致", () => {
     // 参照の値は Python の Decimal で同じ定義を計算したもの
     const c = compareScenarios(base);
     const expected = {

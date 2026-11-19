@@ -54,6 +54,10 @@ describe("SPEC-004 成績", () => {
     expect(s).toMatchObject({ plusDays: 0, zeroDays: 1 });
   });
 
+  it("元手が0以下ならエラーにする", () => {
+    expect(() => summarize(EXAMPLE, 0)).toThrow(/元手/);
+  });
+
   it("同じ日が重なっていたらエラーにする", () => {
     expect(() => summarize([EXAMPLE[0], EXAMPLE[0]], 10_000)).toThrow(/重なって/);
   });
@@ -76,8 +80,8 @@ describe("SPEC-004 成績", () => {
     expect(days).toEqual([{ date: "2026-11-02", pnlJpy: -1000, limitReached: true }]);
   });
 
-  it("日ごとの表は、古い順に、その日の終わりの残高を付ける", () => {
-    expect(dayRows(EXAMPLE, 10_000).map((r) => [r.date, r.endingBalanceJpy])).toEqual([
+  it("日ごとの表は、古い順に、その日の終わりの残高を付ける(新しい順で渡しても同じ)", () => {
+    expect(dayRows([...EXAMPLE].reverse(), 10_000).map((r) => [r.date, r.endingBalanceJpy])).toEqual([
       ["2026-11-02", 10_120],
       ["2026-11-03", 9_810],
       ["2026-11-04", 9_810],

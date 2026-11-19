@@ -34,7 +34,8 @@ export type DayRow = DayResult & {
 
 /**
  * 売った記録を、売った日(米国東部時間の暦日)ごとに合計する(SPEC-004「その日の損益」)。
- * 損失の上限に達した日は、呼ぶ側が日付の一覧で渡す。売買がなかった日は含まれない。
+ * 損失の上限に達した日は、呼ぶ側が日付の一覧で渡す。上限は売り終わった分で決まるので(SPEC-003)、
+ * 上限に達した日には必ず売りの記録がある。売買がなかった日は含まれない。
  */
 export function groupByDay(
   trades: readonly ClosedTrade[],
@@ -45,7 +46,6 @@ export function groupByDay(
     const date = toEastern(t.exitTime).date;
     byDate.set(date, (byDate.get(date) ?? 0) + t.pnlJpy);
   }
-  for (const date of limitReachedDates) if (!byDate.has(date)) byDate.set(date, 0);
   return [...byDate.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([date, pnlJpy]) => ({ date, pnlJpy, limitReached: limitReachedDates.has(date) }));
