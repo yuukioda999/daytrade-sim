@@ -1,10 +1,10 @@
 import { toEastern } from "@/domain/market/eastern-time";
-import { CalendarOutOfRangeError, sessionOn } from "@/domain/market/market-calendar";
+import { previousTradingDate, sessionOn } from "@/domain/market/market-calendar";
 import { WATCHLIST } from "@/domain/market/symbols";
 import { fixedLimitsJpy, fxRateFromX100 } from "@/domain/settings/settings";
-import { evaluateBar, sessionVwap, type SignalConditions } from "@/domain/signal/buy-signal";
+import { evaluateBar, orbBreakoutTime, sessionVwap, type SignalConditions } from "@/domain/signal/buy-signal";
 import { sameTimeVolumes } from "@/domain/signal/volume-history";
-import { balanceJpy, costJpy, dailyLossLimitReached, exitThreshold, pnlJpy } from "@/domain/trading/paper-trading";
+import { costJpy, exitThreshold, lossLimitReachedJpy, pnlJpy } from "@/domain/trading/paper-trading";
 import type { DayRun, Repositories, TradeRecord, WorkerState } from "./ports";
 import { computeDay, type StoredDeps } from "./worker-service";
 
@@ -112,10 +112,12 @@ function viewDate(repos: Repositories, today: string): DayRun | null {
   return runs.length > 0 ? runs[runs.length - 1] : null;
 }
 
+/**
+ * 前の取引日(休場日の表で決める)の最後の足の終値。その日の足を取れていなければ null
+ * (もっと前の日の終値を「前の取引日の終値」として出さない。T10 のレビュー 4)
+ */
 function previousClose(repos: Repositories, symbol: string, date: string): number | null {
-  const dates = repos.bars.fetchedDatesBefore(symbol, date, 1);
-  const d = dates[0];
-  const s = d ? sessionOn(d) : null;
+  const s = sessionOn(previousTradingDate(date));
   if (!s) return null;
   const bars = repos.bars.barsBetween(symbol, s.open, s.close);
   return bars.length > 0 ? bars[bars.length - 1].close : null;
@@ -140,12 +142,7 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
   };
   const autoTradingEnabled = repos.settings.getAutoTradingEnabled() ?? true;
 
-  let run: DayRun | null = null;
-  try {
-    run = viewDate(repos, today);
-  } catch (e) {
-    if (!(e instanceof CalendarOutOfRangeError)) throw e;
-  }
+  const run = viewDate(repos, today);
   const empty: DashboardView = {
     now: iso(now),
     date: null,
@@ -174,6 +171,10 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
   };
   if (!run) return empty;
 
+  // 売買の記録と、今日の損益、損失の上限は、ワーカーが保存した記録から作る(画面を開いた時刻で計算し直すと、
+  // 「あとから処理」の印などが保存した記録と食い違うため。T10 のレビュー 2)。
+  // 計算し直すのは、足から出す値(チャート、3つの条件)と、持っている株の今の損益と売りの基準だけ
+  const stored = repos.trading.listTrades(run.date);
   const day = computeDay(deps, run, run.closed, now);
   const fxRate = fxRateFromX100(run.fxRateX100);
   const lastPriceOf = (symbol: string) => {
@@ -199,14 +200,9 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
             alreadySignaledToday: false,
           })
         : null;
-    // 朝の高値を初めて超えた足(朝の値幅の時間のあと)
-    const orbHigh = evaluation?.orbHigh ?? null;
-    const breakout =
-      orbHigh === null
-        ? undefined
-        : bars.find((b) => b.start.getTime() >= day.session.orbEnd.getTime() && b.close > orbHigh);
-    const holding = day.result.openPositions.some((p) => p.symbol === symbol);
-    const sold = day.records.some((r) => r.symbol === symbol && r.exit !== null);
+    const breakout = orbBreakoutTime(day.session, bars);
+    const holding = stored.some((r) => r.symbol === symbol && r.exit === null);
+    const sold = stored.some((r) => r.symbol === symbol && r.exit !== null);
     return {
       symbol,
       bars: bars.map((b) => ({ time: iso(b.start), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume })),
@@ -216,32 +212,36 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
       changeRatio: lastPrice !== null && prev ? lastPrice / prev - 1 : null,
       conditions: evaluation?.conditions ?? null,
       met: evaluation?.met ?? 0,
-      orbHigh,
+      orbHigh: evaluation?.orbHigh ?? null,
       orbLow: evaluation?.orbLow ?? null,
       vwap: evaluation?.vwap ?? null,
       volumeRatio: evaluation?.volumeRatio ?? null,
-      breakoutTime: breakout ? iso(breakout.start) : null,
+      breakoutTime: breakout ? iso(breakout) : null,
       status: holding ? "holding" : sold ? "sold" : "watching",
     };
   });
 
-  const positions: PositionView[] = day.result.openPositions.map((p) => {
-    const last = lastPriceOf(p.symbol) ?? p.entryPrice;
-    const threshold = exitThreshold(p);
-    return {
-      symbol: p.symbol,
-      shares: p.shares,
-      entryPrice: p.entryPrice,
-      lastPrice: last,
-      unrealizedJpy: pnlJpy(p.entryPrice, last, p.shares, fxRate),
-      changeRatio: last / p.entryPrice - 1,
-      exitPrice: threshold.price,
-      exitKind: threshold.reason,
-      peak: p.peak,
-    };
-  });
+  const positions: PositionView[] = stored
+    .filter((r) => r.exit === null)
+    .map((r) => {
+      const last = lastPriceOf(r.symbol) ?? r.entryPrice;
+      // 最高値と売りの基準は、足から作り直した同じ銘柄の持ち株から取る。見つからなければ損切りの価格のまま
+      const replayed = day.result.openPositions.find((p) => p.symbol === r.symbol);
+      const threshold = replayed ? exitThreshold(replayed) : { price: r.stopPrice, reason: "stop" as const };
+      return {
+        symbol: r.symbol,
+        shares: r.shares,
+        entryPrice: r.entryPrice,
+        lastPrice: last,
+        unrealizedJpy: pnlJpy(r.entryPrice, last, r.shares, fxRate),
+        changeRatio: last / r.entryPrice - 1,
+        exitPrice: threshold.price,
+        exitKind: threshold.reason,
+        peak: replayed?.peak ?? r.entryPrice,
+      };
+    });
 
-  const todayRealized = day.result.account.realizedTodayJpy;
+  const todayRealized = stored.reduce((a, r) => a + (r.exit?.pnlJpy ?? 0), 0);
   const { dailyLossLimitJpy } = fixedLimitsJpy(run.principalJpy);
   return {
     now: iso(now),
@@ -251,15 +251,15 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
     autoTradingEnabled,
     money: {
       principalJpy: run.principalJpy,
-      balanceJpy: balanceJpy(day.result.account),
+      balanceJpy: run.principalJpy + run.startingRealizedJpy + todayRealized,
       todayRealizedJpy: todayRealized,
       unrealizedJpy: positions.reduce((a, p) => a + p.unrealizedJpy, 0),
       dailyLossLimitJpy,
       lossLimitUsedRatio: Math.min(1, Math.max(0, -todayRealized / dailyLossLimitJpy)),
-      limitReached: dailyLossLimitReached(day.result.account),
+      limitReached: lossLimitReachedJpy(todayRealized, run.principalJpy),
     },
     positions,
-    trades: day.records.map((r) => tradeView(r, fxRate)),
+    trades: stored.map((r) => tradeView(r, fxRate)),
     symbols,
   };
 }

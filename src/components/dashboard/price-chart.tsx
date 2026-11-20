@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { IChartApi, IPriceLine, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import type { SymbolView } from "@/application/dashboard-service";
 import { formatEasternTime } from "./dashboard-model";
 
@@ -16,21 +17,38 @@ const COLORS = {
   volume: "#33475e",
 };
 
-const seconds = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
+const seconds = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
 const fromSeconds = (t: unknown) => new Date(Number(t) * 1000).toISOString();
+
+type Parts = {
+  chart: IChartApi;
+  candles: ISeriesApi<"Candlestick">;
+  vwap: ISeriesApi<"Line">;
+  volume: ISeriesApi<"Histogram">;
+  orbLines: IPriceLine[];
+  lineStyleDashed: number;
+};
 
 /**
  * 5分足のローソク足に、朝の値幅と今日の平均価格の線を重ね、下に取引量を出す(AC-007-12)。
- * TradingView の帰属表示(attributionLogo)を有効にする(AC-007-13、ADR-0002)。帰属表示は部品の中の画像とリンクで、外から何も読み込まない
+ * TradingView の帰属表示(attributionLogo)を有効にする(AC-007-13、ADR-0002)。帰属表示は部品の中の画像とリンクで、外から何も読み込まない。
+ * チャートは銘柄ごとに1回だけ作り、1分ごとの読み直しでは中身だけを入れ替える(拡大や横の移動を戻さないため。T10 のレビュー 10)
  */
 export function PriceChart({ view }: { view: SymbolView }) {
   const container = useRef<HTMLDivElement>(null);
+  const parts = useRef<Parts | null>(null);
+  const latest = useRef(view);
+  const hasBars = view.bars.length > 0;
+
+  useEffect(() => {
+    latest.current = view;
+    if (parts.current) setData(parts.current, view);
+  }, [view]);
 
   useEffect(() => {
     const el = container.current;
-    if (!el || view.bars.length === 0) return;
+    if (!el || !hasBars) return;
     let disposed = false;
-    let cleanup: (() => void) | null = null;
     void import("lightweight-charts").then((lc) => {
       if (disposed) return;
       const chart = lc.createChart(el, {
@@ -59,15 +77,6 @@ export function PriceChart({ view }: { view: SymbolView }) {
         wickUpColor: COLORS.up,
         wickDownColor: COLORS.down,
       });
-      candles.setData(
-        view.bars.map((b) => ({ time: seconds(b.time) as never, open: b.open, high: b.high, low: b.low, close: b.close })),
-      );
-      if (view.orbHigh !== null) {
-        candles.createPriceLine({ price: view.orbHigh, color: COLORS.orb, lineStyle: lc.LineStyle.Dashed, lineWidth: 1, title: "朝の高値" });
-      }
-      if (view.orbLow !== null) {
-        candles.createPriceLine({ price: view.orbLow, color: COLORS.orb, lineStyle: lc.LineStyle.Dashed, lineWidth: 1, title: "朝の安値" });
-      }
       const vwap = chart.addSeries(lc.LineSeries, {
         color: COLORS.vwap,
         lineWidth: 2,
@@ -75,7 +84,6 @@ export function PriceChart({ view }: { view: SymbolView }) {
         lastValueVisible: false,
         crosshairMarkerVisible: false,
       });
-      vwap.setData(view.vwapLine.map((p) => ({ time: seconds(p.time) as never, value: p.value })));
       const volume = chart.addSeries(lc.HistogramSeries, {
         color: COLORS.volume,
         priceScaleId: "volume",
@@ -85,17 +93,18 @@ export function PriceChart({ view }: { view: SymbolView }) {
       });
       chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
       candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.25 } });
-      volume.setData(view.bars.map((b) => ({ time: seconds(b.time) as never, value: b.volume })));
+      parts.current = { chart, candles, vwap, volume, orbLines: [], lineStyleDashed: lc.LineStyle.Dashed };
+      setData(parts.current, latest.current);
       chart.timeScale().fitContent();
-      cleanup = () => chart.remove();
     });
     return () => {
       disposed = true;
-      cleanup?.();
+      parts.current?.chart.remove();
+      parts.current = null;
     };
-  }, [view]);
+  }, [hasBars]);
 
-  if (view.bars.length === 0) {
+  if (!hasBars) {
     return (
       <div className="flex h-[320px] items-center justify-center rounded-lg border border-border text-fg-sub">
         今日の値動きはまだ届いていません
@@ -104,4 +113,18 @@ export function PriceChart({ view }: { view: SymbolView }) {
   }
   // 絵は読み上げられないので、要点は figcaption の文字(AC-007-14)で伝える
   return <div ref={container} data-testid="price-chart" className="h-[320px] w-full" />;
+}
+
+function setData(p: Parts, view: SymbolView): void {
+  p.candles.setData(view.bars.map((b) => ({ time: seconds(b.time), open: b.open, high: b.high, low: b.low, close: b.close })));
+  p.vwap.setData(view.vwapLine.map((v) => ({ time: seconds(v.time), value: v.value })));
+  p.volume.setData(view.bars.map((b) => ({ time: seconds(b.time), value: b.volume })));
+  for (const line of p.orbLines) p.candles.removePriceLine(line);
+  p.orbLines = [];
+  const add = (price: number | null, title: string) => {
+    if (price === null) return;
+    p.orbLines.push(p.candles.createPriceLine({ price, color: COLORS.orb, lineStyle: p.lineStyleDashed, lineWidth: 1, title }));
+  };
+  add(view.orbHigh, "朝の高値");
+  add(view.orbLow, "朝の安値");
 }

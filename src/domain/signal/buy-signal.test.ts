@@ -5,6 +5,7 @@ import {
   barPrice,
   evaluateBar,
   openingRange,
+  orbBreakoutTime,
   sessionVwap,
   volumeBaseline,
   type EvaluateInput,
@@ -248,5 +249,22 @@ describe("入力の前提", () => {
 
   it("足が0本の時はエラーにする", () => {
     expect(() => evalWith({ barsThroughT: [] })).toThrow(/足がありません/);
+  });
+});
+
+describe("朝の高値を初めて超えた足(ダッシュボードの AC-007-14)", () => {
+  it("SPEC-002 例1: 09:45 の足で初めて超える", () => {
+    expect(orbBreakoutTime(session, [...ORB_BARS, BAR_0945, bar("09:50", 78.6, 78.2, 78.5, 100)])).toEqual(at("09:45"));
+  });
+
+  it("境界: 終値が朝の高値と誤差の範囲で等しい足は、超えていない(条件1と同じ比べ方)", () => {
+    const equal = { ...BAR_0945, close: 77.9 + 1e-12 };
+    expect(orbBreakoutTime(session, [...ORB_BARS, equal])).toBeNull();
+    expect(evaluateBar({ ...EXAMPLE, barsThroughT: [...ORB_BARS, equal] }).conditions.orbBreakout).toBe(false);
+  });
+
+  it("朝の値幅の時間の足は、高値より上で終わっても数えない。朝の値幅が決まっていなければ null", () => {
+    expect(orbBreakoutTime(session, ORB_BARS)).toBeNull();
+    expect(orbBreakoutTime(session, ORB_BARS.slice(0, 2))).toBeNull();
   });
 });

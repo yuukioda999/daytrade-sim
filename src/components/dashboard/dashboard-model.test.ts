@@ -10,6 +10,7 @@ import {
   formatSignedRatio,
   formatUsd,
   latestTrade,
+  lossLimitPercent,
   statusLabel,
   workerNotice,
 } from "./dashboard-model";
@@ -71,20 +72,41 @@ describe("監視リスト(AC-007-11、07)", () => {
     expect(statusLabel({ status: "sold", met: 1 }).text).toBe("売り終わり");
   });
 
-  it("3つの条件を普通の言葉で出し、専門用語を添える", () => {
+  it("AC-002-07: 3つの条件を普通の言葉で出し、専門用語を添える", () => {
     const rows = conditionRows(symbol());
     expect(rows.map((r) => [r.label, r.term, r.met])).toEqual([
       ["朝の高値超え", "ORB", true],
       ["今日の平均価格より上", "VWAP", true],
-      ["取引量が1.5倍以上", "出来高急増", false],
+      ["取引量の増加", "出来高急増", false],
     ]);
-    expect(rows.map((r) => r.detail)).toEqual(["朝の高値 $77.90", "平均 $77.76", "今 1.2倍"]);
+    expect(rows.map((r) => r.detail)).toEqual(["朝の高値 $77.90(超えています)", "平均 $77.76", "1.5倍以上で達成。今 1.23倍"]);
+  });
+
+  it("AC-002-07: 朝の高値を超えていなければ、残りの値幅を出す(等しい時は あと $0.00)", () => {
+    const below = { conditions: { orbBreakout: false, aboveVwap: true, volumeSurge: false } };
+    expect(conditionRows(symbol({ ...below, lastPrice: 77.2 }))[0].detail).toBe("朝の高値 $77.90 まで あと $0.70");
+    expect(conditionRows(symbol({ ...below, lastPrice: 77.9 }))[0].detail).toBe("朝の高値 $77.90 まで あと $0.00");
+  });
+
+  it("AC-002-07: 取引量の倍率は小数2桁で切り捨てる(1.4998倍を 1.50倍と出さない)", () => {
+    expect(conditionRows(symbol({ volumeRatio: 1.4998 }))[2].detail).toBe("1.5倍以上で達成。今 1.49倍");
+    expect(conditionRows(symbol({ volumeRatio: 1.5 }))[2].detail).toBe("1.5倍以上で達成。今 1.50倍");
   });
 
   it("まだ計算できない値は、計算できない理由を出す", () => {
     const rows = conditionRows(symbol({ conditions: null, orbHigh: null, vwap: null, volumeRatio: null }));
     expect(rows.every((r) => !r.met)).toBe(true);
     expect(rows.map((r) => r.detail)).toEqual(["取引開始から15分たつと決まります", "まだ計算できません", "比べる過去の日がありません"]);
+  });
+});
+
+describe("損失の上限の使用割合(AC-007-16、17)", () => {
+  it("0%、途中、上限の手前は切り捨て、上限に達したら 100%", () => {
+    expect(lossLimitPercent(0, false)).toBe(0);
+    expect(lossLimitPercent(0.086022, false)).toBe(8);
+    expect(lossLimitPercent(0.999, false)).toBe(99);
+    expect(lossLimitPercent(0.995, false)).toBe(99);
+    expect(lossLimitPercent(1, true)).toBe(100);
   });
 });
 

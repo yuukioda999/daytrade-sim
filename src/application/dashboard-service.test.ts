@@ -25,6 +25,9 @@ async function tickEveryMinute(from: Date, to: Date) {
 }
 
 const view = (now: Date) => getDashboardView({ repos }, now);
+// 冬時間の DATE の足の時刻を、米国東部時間の時と分に戻す(別の日に同じ時刻の足を作るため)
+const toHour = (d: Date) => Math.floor((d.getTime() - et(0, 0).getTime()) / 3_600_000);
+const toMinute = (d: Date) => Math.floor(((d.getTime() - et(0, 0).getTime()) % 3_600_000) / 60_000);
 
 describe("自動売買のプロセスの様子", () => {
   it("AC-007-09: 一度も動いていなければ、起動の仕方を出す", () => {
@@ -91,6 +94,75 @@ describe("監視リストと買い(SPEC-002 例1、SPEC-003 例1)", () => {
   });
 });
 
+describe("保存した記録と画面の食い違いを防ぐ(T10 のレビュー 2)", () => {
+  it("AC-003-10: 「あとから処理」の印は、ワーカーが保存した記録のとおりに出す。画面を開いた時刻で決め直さない", async () => {
+    // 09:50 に買い、15:55 の足は届かない。ワーカーは 16:30 に遅れずに締める(印なし)
+    source = new ScriptedSource({ SOXL: SOXL_DAY.slice(0, 5) });
+    repos.credentials.save(CREDS);
+    await tickEveryMinute(et(9, 30), et(10, 15));
+    await tickEveryMinute(et(16, 25), et(16, 31));
+    const saved = repos.trading.listTrades(DATE);
+    expect(saved[0]).toMatchObject({ late: false, exit: { reason: "close" } });
+    // 次の日の朝に画面を開いても、印は付かない
+    const v = view(et(9, 0, "2026-11-03"));
+    expect(v.trades[0]).toMatchObject({ late: false, exit: { reason: "close" } });
+    expect(v.positions).toEqual([]);
+  });
+});
+
+describe("前の取引日の終値(T10 のレビュー 4)", () => {
+  it("前の取引日の足を取れていなければ、もっと前の日と比べずに null にする", async () => {
+    repos.credentials.save(CREDS);
+    await tickEveryMinute(et(9, 30), et(10, 12));
+    const soxl = () => view(et(10, 12)).symbols.find((x) => x.symbol === "SOXL");
+    expect(soxl()?.previousClose).toBe(70);
+    const empty = memoryRepositories(() => clock);
+    // 足を1本も持たない保存先に、今日の記録だけを写す
+    for (const r of repos.trading.listDayRuns()) empty.trading.putDayRun(r);
+    empty.bars.saveBars(repos.bars.barsBetween("SOXL", et(9, 30), et(16, 0)));
+    const v = getDashboardView({ repos: empty }, et(10, 12)).symbols.find((x) => x.symbol === "SOXL");
+    expect(v?.lastPrice).toBe(78.5);
+    expect(v?.previousClose).toBeNull();
+    expect(v?.changeRatio).toBeNull();
+  });
+
+  it("SPEC-001: 短縮取引日の次の日は、短縮取引日の最後の足(12:55)の終値と比べる", async () => {
+    const day = "2026-11-30";
+    const early = "2026-11-27";
+    source = new ScriptedSource({ SOXL: [bar("SOXL", day, 9, 30, 80, 80, 80, 80, 100)] }, day);
+    repos.credentials.save(CREDS);
+    repos.bars.saveBars([bar("SOXL", early, 12, 50, 71, 71, 71, 71, 60), bar("SOXL", early, 12, 55, 72, 72, 72, 72.5, 60)]);
+    await tickEveryMinute(et(9, 45, day), et(9, 50, day));
+    const soxl = view(et(9, 50, day)).symbols.find((x) => x.symbol === "SOXL");
+    expect(soxl).toMatchObject({ lastPrice: 80, previousClose: 72.5 });
+  });
+});
+
+describe("夏時間と週末(SPEC-001)", () => {
+  it("夏時間の日も、米国東部時間の取引時間の足を出す", async () => {
+    const day = "2026-07-01";
+    // 冬時間の 09:30 は 14:30Z、夏時間の 09:30 は 13:30Z。同じ米国東部時間の足を作る
+    const shifted = SOXL_DAY.map((b) => ({ ...b, start: et(toHour(b.start), toMinute(b.start), day) }));
+    source = new ScriptedSource({ SOXL: shifted }, day);
+    repos.credentials.save(CREDS);
+    await tickEveryMinute(et(9, 30, day), et(10, 12, day));
+    const v = view(et(10, 12, day));
+    expect(v).toMatchObject({ date: day, isToday: true });
+    expect(v.symbols.find((x) => x.symbol === "SOXL")).toMatchObject({ breakoutTime: et(9, 45, day).toISOString(), status: "holding" });
+    expect(v.trades[0]).toMatchObject({ entryPrice: 78.45, entryTime: et(9, 50, day).toISOString() });
+  });
+
+  it("AC-007-21: 週末は、金曜日の記録を出し、今日ではないことを示す", async () => {
+    const fri = "2026-11-06";
+    source = new ScriptedSource({ SOXL: SOXL_DAY.map((b) => ({ ...b, start: et(toHour(b.start), toMinute(b.start), fri) })) }, fri);
+    repos.credentials.save(CREDS);
+    await tickEveryMinute(et(9, 30, fri), et(10, 20, fri));
+    const v = view(et(12, 0, "2026-11-07"));
+    expect(v).toMatchObject({ date: fri, isToday: false });
+    expect(v.trades).toHaveLength(1);
+  });
+});
+
 describe("今日のお金の状況", () => {
   it("AC-007-16: 損切りのあと、残高、今日の損益、損失の上限の使用割合を出す", async () => {
     repos.credentials.save(CREDS);
@@ -120,7 +192,22 @@ describe("今日のお金の状況", () => {
     expect(v.money).toMatchObject({ limitReached: true, lossLimitUsedRatio: 1 });
   });
 
-  it("今日まだ記録がない日は、前の記録の日を出し、今日ではないことを示す", async () => {
+  it("AC-007-16: 利益の日は、損失の上限の使用割合を 0 にする", async () => {
+    source = new ScriptedSource({
+      SOXL: [...SOXL_DAY.slice(0, 5), bar("SOXL", DATE, 9, 55, 79, 79.5, 78.9, 79.4, 100), bar("SOXL", DATE, 10, 0, 79.4, 79.6, 79.3, 79.5, 100)],
+    });
+    repos.credentials.save(CREDS);
+    // 15:55 の足は届かないので、締める時刻(16:30)に、届いた最後の足の終値で売る
+    await tickEveryMinute(et(9, 30), et(10, 20));
+    await tickEveryMinute(et(16, 25), et(16, 31));
+    const v = view(et(16, 31));
+    expect(v.trades[0].exit?.reason).toBe("close");
+    // 手計算: (79.50 - 78.45) × 0.4248 × 150 = 66.906 円
+    expect(v.money?.todayRealizedJpy).toBeCloseTo(66.906, 6);
+    expect(v.money).toMatchObject({ lossLimitUsedRatio: 0, limitReached: false });
+  });
+
+  it("AC-007-21: 今日まだ記録がない日は、前の記録の日を出し、今日ではないことを示す", async () => {
     repos.credentials.save(CREDS);
     await tickEveryMinute(et(9, 30), et(10, 20));
     const v = view(et(9, 0, "2026-11-03"));

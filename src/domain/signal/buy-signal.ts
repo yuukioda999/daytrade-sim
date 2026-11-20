@@ -110,6 +110,17 @@ function assertBarsOfSession(session: MarketSession, bars: readonly Bar[]): void
   }
 }
 
+/**
+ * 朝の高値を初めて超えた足の始まりの時刻(条件1と同じ比べ方。ダッシュボードの AC-007-14)。
+ * 朝の値幅の時間のあとの足だけを見る。超えていなければ null
+ */
+export function orbBreakoutTime(session: MarketSession, bars: readonly Bar[]): Date | null {
+  const range = openingRange(session, bars);
+  if (range === null) return null;
+  const hit = bars.find((b) => b.start.getTime() >= session.orbEnd.getTime() && greaterThan(b.close, range.high));
+  return hit ? hit.start : null;
+}
+
 /** 足 t が終わった時点で、3つの条件と買いサインを判定する(SPEC-002)。 */
 export function evaluateBar(input: EvaluateInput): SignalEvaluation {
   const { session, barsThroughT, pastSameTimeVolumes, alreadySignaledToday } = input;

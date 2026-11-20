@@ -14,6 +14,7 @@ import {
   formatSignedRatio,
   formatUsd,
   latestTrade,
+  lossLimitPercent,
   statusLabel,
   workerNotice,
   type Signed,
@@ -65,7 +66,7 @@ export function DashboardView() {
       {title}
       {state.refreshFailed && <RefreshFailed />}
       <DayNotice view={view} />
-      {view.money?.limitReached && <LimitWarning />}
+      {view.money?.limitReached && <LimitWarning view={view} />}
       <div className="flex flex-wrap items-start gap-4">
         <Watchlist view={view} selected={symbol.symbol} onSelect={setSelected} />
         <section aria-label="選んだ銘柄" className="flex min-w-0 flex-[999_1_520px] flex-col gap-4">
@@ -114,12 +115,20 @@ function DayNotice({ view }: { view: View }) {
   );
 }
 
-function LimitWarning() {
+/** 「今日」か、表示している日の日付(AC-007-21) */
+export function dayLabelOf(view: Pick<View, "date" | "isToday">): string {
+  return view.date === null || view.isToday ? "今日" : formatDateJa(view.date);
+}
+
+function LimitWarning({ view }: { view: View }) {
+  const day = dayLabelOf(view);
   return (
     <div role="alert" className="rounded-xl border border-down bg-down/15 px-4 py-3">
-      <p className="font-bold text-fg">今日の損失が上限に達しました</p>
+      <p className="font-bold text-fg">{day}の損失が上限に達しました</p>
       <p className="text-[13px] text-fg">
-        今日はこれ以上、自動で買いません(新しい買いを止めています)。持っている株の売りは続けています。次の取引日の始めに再開します。
+        {view.isToday
+          ? "今日はこれ以上、自動で買いません(新しい買いを止めています)。持っている株の売りは続けています。次の取引日の始めに再開します。"
+          : "その日は、上限に達したあと新しい買いを止め、持っている株の売りは続けました。"}
       </p>
     </div>
   );
@@ -146,15 +155,15 @@ function Watchlist({ view, selected, onSelect }: { view: View; selected: string;
         <dl className="mb-3 flex flex-col gap-2 text-xs text-fg-sub">
           <div>
             <dt className="font-bold text-fg">朝の高値超え(ORB)</dt>
-            <dd>取引開始から15分間の一番高い値段を、その後に上回ること。上がる勢いがある目安です。</dd>
+            <dd>取引開始から15分間の一番高い値段を、その後の5分ごとの終わりの値段が上回っていること。</dd>
           </div>
           <div>
             <dt className="font-bold text-fg">今日の平均価格より上(VWAP)</dt>
-            <dd>今日売買された値段の平均より、今の値段が高いこと。買い手が優勢な目安です。</dd>
+            <dd>今日売買された値段の平均(取引量で重みをつけた平均)より、今の値段が高いこと。</dd>
           </div>
           <div>
             <dt className="font-bold text-fg">取引量の増加(出来高急増)</dt>
-            <dd>同じ時刻の過去の日と比べて、売買された株の数が1.5倍以上あること。多くの人が注目している目安です。</dd>
+            <dd>同じ時刻の過去20取引日の平均と比べて、売買された株の数が1.5倍以上あること。</dd>
           </div>
         </dl>
       </details>
@@ -267,8 +276,8 @@ function BuyCard({ trade }: { trade: TradeView | null }) {
         </span>
       </div>
       <dl className="mt-3.5 grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
-        <BuyFact label="自動で練習買いした価格" value={formatUsd(trade.entryPrice)} />
-        <BuyFact label="損切りの価格(ここまで下がったら売る)" value={formatUsd(trade.stopPrice)} />
+        <BuyFact label="自動で練習買い(ペーパートレード)した価格" value={formatUsd(trade.entryPrice)} />
+        <BuyFact label="損切りの価格(逆指値。ここまで下がったら売る)" value={formatUsd(trade.stopPrice)} />
         <BuyFact label={`買った量(${formatJpy(trade.costJpy)}分)`} value={formatShares(trade.shares)} />
       </dl>
       <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3">
@@ -313,7 +322,7 @@ function WorkerCard({ view }: { view: View }) {
       {notice.detail && <p className="mt-1 text-xs text-fg-sub">{notice.detail}</p>}
       {view.date !== null && (
         <p className="mt-2 text-[15px] font-semibold">
-          {view.isToday ? "今日" : formatDateJa(view.date)}の買い {buys}回 / 売り {sells}回
+          {dayLabelOf(view)}の買い {buys}回 / 売り {sells}回
         </p>
       )}
       <p className="mt-1 text-xs text-fg-muted">条件がそろうと自動で練習買いします。実際の注文は出ません。</p>
@@ -324,23 +333,26 @@ function WorkerCard({ view }: { view: View }) {
 function MoneyCard({ view }: { view: View }) {
   const m = view.money;
   if (!m) return null;
-  const usedPercent = Math.round(m.lossLimitUsedRatio * 100);
+  const usedPercent = lossLimitPercent(m.lossLimitUsedRatio, m.limitReached);
+  const day = dayLabelOf(view);
   const remaining = Math.max(0, m.dailyLossLimitJpy + Math.min(0, m.todayRealizedJpy));
   return (
     <section aria-labelledby="money-title" className={card} data-testid="money-card">
       <div className="flex items-baseline justify-between">
         <h2 id="money-title" className={subhead}>
-          {view.isToday ? "今日" : formatDateJa(view.date ?? "")}のお金の状況
+          {day}のお金の状況
         </h2>
         <Link href="/trades" className="inline-flex min-h-11 items-center text-xs text-accent-soft">
           詳細
         </Link>
       </div>
-      <p className="text-xs text-fg-muted">残高(元手 {formatJpy(m.principalJpy)})</p>
+      <p className="text-xs text-fg-muted">
+        残高。元手<span className="text-[11px]">(元本)</span>は {formatJpy(m.principalJpy)}
+      </p>
       <p className="text-[28px] font-bold">{formatJpy(m.balanceJpy)}</p>
       <dl className="mt-2 flex flex-col gap-1">
         <div className="flex justify-between gap-2">
-          <dt className="text-fg-muted">今日の損益(売買が済んだ分)</dt>
+          <dt className="text-fg-muted">{day}の損益(売買が済んだ分)</dt>
           <dd className="shrink-0 font-semibold">
             <SignedText value={formatSignedJpy(m.todayRealizedJpy)} />
           </dd>
@@ -353,7 +365,9 @@ function MoneyCard({ view }: { view: View }) {
         </div>
       </dl>
       <div className="mt-3.5 flex justify-between gap-2 text-xs text-fg-muted">
-        <span>今日の損失の上限(元手の10% = {formatJpy(m.dailyLossLimitJpy)})</span>
+        <span>
+          {day}の損失の上限<span className="text-[11px]">(デイリー損失リミット)</span>: 元手の10% = {formatJpy(m.dailyLossLimitJpy)}
+        </span>
         <span className={cn("shrink-0 whitespace-nowrap", m.limitReached && "font-semibold text-down")}>{usedPercent}% 使用</span>
       </div>
       <div
@@ -364,21 +378,24 @@ function MoneyCard({ view }: { view: View }) {
         <div className={cn("h-full", m.limitReached ? "bg-down" : "bg-warn")} style={{ width: `${usedPercent}%` }} />
       </div>
       <p className="mt-1.5 text-xs text-fg-muted">
-        {m.limitReached
-          ? "上限に達したので、今日の新しい買いを止めています"
-          : `あと ${formatJpy(remaining)}の損失で、今日の新しい買いを止めます`}
+        {!view.isToday
+          ? m.limitReached
+            ? "上限に達したので、その日は新しい買いを止めました"
+            : "その日は上限に達しませんでした"
+          : m.limitReached
+            ? "上限に達したので、今日の新しい買いを止めています"
+            : `あと ${formatJpy(remaining)}の損失で、今日の新しい買いを止めます`}
       </p>
     </section>
   );
 }
 
-export function PositionsCard({ positions, headingLevel = 2 }: { positions: PositionView[]; headingLevel?: 2 | 3 }) {
-  const H = headingLevel === 2 ? "h2" : "h3";
+export function PositionsCard({ positions }: { positions: PositionView[] }) {
   return (
     <section aria-labelledby="positions-title" className={card} data-testid="positions-card">
-      <H id="positions-title" className={headingLevel === 2 ? subhead : "text-[15px] font-semibold"}>
+      <h2 id="positions-title" className={subhead}>
         今持っている株
-      </H>
+      </h2>
       {positions.length === 0 ? (
         <p className="mt-2 text-fg-sub">今は持っている株はありません</p>
       ) : (

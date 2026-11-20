@@ -6,7 +6,7 @@ import { DASHBOARD_NOW, DASHBOARD_PORT } from "./dashboard-fixture";
  * 2つ目のサーバーが、src/testing/seed-dashboard-db.ts で作った DB と、止まった時計(2026-11-02 10:17:30 米国東部)で動く:
  * - SOXL: 09:50 に $78.45 で 0.4248株を練習買いし、09:55 に $77.10 で損切り(損益 -86.022円)
  * - TQQQ: 09:50 に $78.45 で 0.4248株を練習買いし、持っている(今 $79.20、未確定 +47.79円)
- * 手計算: 残高 10,000 - 86.022 = 9,913.978 → 9,914円。損失の上限 1,000円の 8.6% → 9% 使用
+ * 手計算: 残高 10,000 - 86.022 = 9,913.978 → 9,914円。損失の上限 1,000円の 8.6% → 切り捨てて 8% 使用
  */
 test.use({ baseURL: `http://127.0.0.1:${DASHBOARD_PORT}` });
 
@@ -35,14 +35,18 @@ test.describe("ダッシュボード", () => {
     await expect(worker).toContainText("今日の買い 2回 / 売り 1回");
   });
 
-  test("AC-007-11、06、07: 4銘柄の価格、前日の終値からの変化(▲▼と符号)、3条件、状態を出す", async ({ page }) => {
+  test("AC-007-11、06、07、AC-002-07: 4銘柄の価格、前日の終値からの変化(▲▼と符号)、3条件、状態を出す", async ({ page }) => {
     await open(page, "/");
     const tqqq = page.getByTestId("watch-TQQQ");
     await expect(tqqq).toContainText("買いサイン・保有中");
     await expect(tqqq).toContainText("$79.20");
     // 手計算: 79.20 / 70.00 - 1 = 13.14%
     await expect(tqqq).toContainText("▲ +13.14%");
-    await expect(tqqq).toContainText("朝の高値超え(ORB) 朝の高値 $77.90");
+    // AC-002-07: 朝の高値までの残りの値幅と、取引量の倍率
+    await expect(tqqq).toContainText("朝の高値超え(ORB) 朝の高値 $77.90(超えています)");
+    await expect(tqqq).toContainText("取引量の増加(出来高急増) 1.5倍以上で達成。今 1.83倍");
+    // 手計算: 77.90 - 77.20 = 0.70
+    await expect(page.getByTestId("watch-SOXL")).toContainText("朝の高値 $77.90 まで あと $0.70");
     await expect(page.getByTestId("watch-SOXL")).toContainText("売り終わり");
     await expect(page.getByTestId("watch-SOXL")).toContainText("▲ +10.29%");
     for (const symbol of ["TSLL", "NVDL"]) {
@@ -73,7 +77,7 @@ test.describe("ダッシュボード", () => {
     const buy = page.getByRole("region", { name: "TQQQ は3つの条件がそろいました" });
     await expect(buy).toContainText("$78.45");
     await expect(buy).toContainText("$77.10");
-    // 手計算: 78.45 × 0.4248 × 150 = 4,998.80 → 4,999円
+    // 手計算: 78.45 × 0.4248 × 150 = 4,998.834 → 4,999円
     await expect(buy).toContainText("買った量(4,999円分)0.4248株");
     await expect(buy).toContainText("実際の注文は出していません");
   });
@@ -81,12 +85,12 @@ test.describe("ダッシュボード", () => {
   test("AC-007-16: 残高、今日の損益、持っている株の損益、損失の上限の使用割合と、今持っている株を出す", async ({ page }) => {
     await open(page, "/");
     const money = page.getByTestId("money-card");
-    await expect(money).toContainText("残高(元手 10,000円)");
+    await expect(money).toContainText("残高。元手(元本)は 10,000円");
     await expect(money).toContainText("9,914円");
     await expect(money).toContainText("▼ -86円");
     // 手計算: (79.20 - 78.45) × 0.4248 × 150 = 47.79 → 48円
     await expect(money).toContainText("▲ +48円");
-    await expect(money).toContainText("9% 使用");
+    await expect(money).toContainText("8% 使用");
     await expect(money).toContainText("あと 914円の損失で、今日の新しい買いを止めます");
     const positions = page.getByTestId("positions-card");
     await expect(positions).toContainText("TQQQ");
@@ -171,6 +175,21 @@ test.describe("自動売買の記録", () => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });
+});
+
+test("AC-007-21: 今日の記録がまだない時は、最後に記録した日と、その日付の言葉で出す", async ({ page }) => {
+  await patchDashboard(page, (view) => {
+    view.isToday = false;
+    Object.assign(view.money as Record<string, unknown>, { todayRealizedJpy: -1000, lossLimitUsedRatio: 1, limitReached: true });
+  });
+  await open(page, "/");
+  await expect(page.getByText("今日(米国東部)の記録はまだありません。11月2日(月)の記録を出しています。")).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "11月2日(月)の損失が上限に達しました" })).toBeVisible();
+  const money = page.getByTestId("money-card");
+  await expect(money).toContainText("11月2日(月)のお金の状況");
+  await expect(money).toContainText("11月2日(月)の損益(売買が済んだ分)");
+  await expect(money).not.toContainText("今日");
+  await expect(page.getByTestId("worker-card")).toContainText("11月2日(月)の買い 2回 / 売り 1回");
 });
 
 test("AC-007-04: ダッシュボードは横にはみ出さない", async ({ page }) => {

@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import type { DashboardView as View, TradeView } from "@/application/dashboard-service";
-import { formatDateJa, formatJpy } from "@/components/settings/format";
+import { formatJpy } from "@/components/settings/format";
 import { cn } from "@/components/ui/cn";
 import { BUDGET_RATIO, DAILY_LOSS_LIMIT_RATIO, TRAILING_ACTIVATION_RATIO, TRAILING_STOP_RATIO } from "@/domain/trading/paper-trading";
 import { exitReasonLabel, formatEasternTime, formatSignedJpy, formatUsd } from "./dashboard-model";
-import { PositionsCard, RefreshFailed, SignedText } from "./dashboard-view";
+import { dayLabelOf, PositionsCard, RefreshFailed, SignedText } from "./dashboard-view";
 import { useDashboard } from "./use-dashboard";
 
 const card = "rounded-xl border border-border bg-surface p-5";
@@ -83,7 +83,7 @@ function Rules({ view }: { view: View }) {
 }
 
 function TradesTable({ view }: { view: View }) {
-  const dayLabel = view.date === null || view.isToday ? "今日" : formatDateJa(view.date);
+  const dayLabel = dayLabelOf(view);
   const realized = view.trades.reduce((a, t) => a + (t.exit?.pnlJpy ?? 0), 0);
   const anyLate = view.trades.some((t) => t.late);
   return (
@@ -98,7 +98,7 @@ function TradesTable({ view }: { view: View }) {
         <p className="mt-1 text-xs text-fg-sub">今日(米国東部)の記録はまだないので、最後に記録した日を出しています</p>
       )}
       {view.trades.length === 0 ? (
-        <p className="mt-3 text-fg-sub">今日はまだ売買していません</p>
+        <p className="mt-3 text-fg-sub">{view.isToday || view.date === null ? "今日はまだ売買していません" : `${dayLabel}は売買していません`}</p>
       ) : (
         <>
           {/* 幅が狭い時は、表をこの枠の中で横に動かす(AC-007-04)。キーボードでも動かせるように枠にフォーカスできるようにする */}

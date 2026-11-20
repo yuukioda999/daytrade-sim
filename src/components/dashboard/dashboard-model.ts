@@ -62,7 +62,7 @@ export function conditionRows(s: SymbolView): ConditionRow[] {
     {
       label: "朝の高値超え",
       term: "ORB",
-      detail: s.orbHigh === null ? "取引開始から15分たつと決まります" : `朝の高値 ${formatUsd(s.orbHigh)}`,
+      detail: orbDetail(s),
       met: c?.orbBreakout ?? false,
     },
     {
@@ -72,12 +72,38 @@ export function conditionRows(s: SymbolView): ConditionRow[] {
       met: c?.aboveVwap ?? false,
     },
     {
-      label: `取引量が${VOLUME_SURGE_RATIO}倍以上`,
+      label: "取引量の増加",
       term: "出来高急増",
-      detail: s.volumeRatio === null ? "比べる過去の日がありません" : `今 ${s.volumeRatio.toFixed(1)}倍`,
+      detail:
+        s.volumeRatio === null
+          ? "比べる過去の日がありません"
+          : `${VOLUME_SURGE_RATIO}倍以上で達成。今 ${truncate2(s.volumeRatio).toFixed(2)}倍`,
       met: c?.volumeSurge ?? false,
     },
   ];
+}
+
+/** 小数2桁で切り捨てる(1.4998倍を「1.50倍」と出して「未達」と並べないため) */
+function truncate2(value: number): number {
+  return Math.floor(value * 100 + 1e-9) / 100;
+}
+
+/** 朝の高値と、そこまでの残りの値幅(SPEC-002 AC-002-07) */
+function orbDetail(s: SymbolView): string {
+  if (s.orbHigh === null) return "取引開始から15分たつと決まります";
+  const high = `朝の高値 ${formatUsd(s.orbHigh)}`;
+  if (s.lastPrice === null) return high;
+  if (s.conditions?.orbBreakout) return `${high}(超えています)`;
+  return `${high} まで あと ${formatUsd(Math.max(0, s.orbHigh - s.lastPrice))}`;
+}
+
+/**
+ * 損失の上限の使用割合(%)。上限に達するまでは切り捨てて最大 99% にする
+ * (99.5% を「100% 使用」と出して「あと 5円」と並べないため。T10 のレビュー 6)
+ */
+export function lossLimitPercent(ratio: number, reached: boolean): number {
+  if (reached) return 100;
+  return Math.min(99, Math.floor(ratio * 100 + 1e-9));
 }
 
 /** チャートの要点を文字で出す(AC-007-14) */
