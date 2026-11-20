@@ -21,6 +21,22 @@
   --color-warn: #f2b84b;
   --color-warn-fg: #1a1203;
 
+  /*
+   * shadcn/ui の部品が使う色の名前を、上の色に対応づける(T6、2026-11-20)。
+   * 値は上と同じにする。shadcn の accent(ホバーの背景)は、このテーマの accent(青)と
+   * 意味が違うので、accent を使う部品を足す時は対応を決め直す。
+   */
+  --color-background: #0b0f14;
+  --color-foreground: #e6edf3;
+  --color-card: #111823;
+  --color-card-foreground: #e6edf3;
+  --color-primary: #5aa9ff;
+  --color-primary-foreground: #06121f;
+  --color-muted-foreground: #93a1b3;
+  /* スイッチのオフなど。背景(surface)との比 3:1 以上 */
+  --color-input: #5d6f86;
+  --color-ring: #5aa9ff;
+
   --font-sans:
     "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI",
     system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -28,6 +44,13 @@
 
 html {
   color-scheme: dark;
+}
+
+/* shadcn/ui の部品の枠線の色(Tailwind v4 の枠線の既定は文字の色のため) */
+*,
+::before,
+::after {
+  border-color: var(--color-border);
 }
 
 body {
