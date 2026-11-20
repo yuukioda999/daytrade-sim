@@ -1,0 +1,15 @@
+# 秘密の混入検査(gitleaks)の設定。ADR-0006
+# gitleaks の標準の規則を使い、テストのために作ったダミーのキーだけを除外する
+title = "daytrade-sim"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "テストのダミーのキー(本物ではない。AAAA や 0000 の並びで作っている)"
+regexes = [
+  '''PKTESTKEY0+[A-Z]*''',
+  '''PKOTHERKEY0+[A-Z]*''',
+  '''TestSecret0+[A-Za-z0-9]*''',
+  '''OtherSecret0+''',
+]
