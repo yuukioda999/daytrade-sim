@@ -56,16 +56,25 @@ test.describe("成績の画面", () => {
     await expect(page.getByText("41日分の日ごとの損益。プラスの日(上向きの緑)が0日、マイナスの日(下向きの赤)が1日")).toBeVisible();
   });
 
-  test("AC-007-05: 読み上げから外したグラフの中に、キーボードで止まる先がない", async ({ page }) => {
+  test("AC-007-05: Tab で移動しても、読み上げから外したグラフの中では止まらない", async ({ page }) => {
     await open(page, "/results");
     await expect(page.getByTestId("backtest-chart").locator("svg")).toBeVisible();
-    for (const id of ["live-chart", "backtest-chart"]) {
-      const stops = await page
-        .getByTestId(id)
-        .locator("[tabindex]")
-        .evaluateAll((els) => els.filter((e) => Number(e.getAttribute("tabindex")) >= 0).length);
-      expect(stops).toBe(0);
+    // 日付のリンク(41件)の手前まで Tab を押し、止まった先がグラフの中でないことを毎回確かめる
+    let reachedTable = false;
+    for (let i = 0; i < 40 && !reachedTable; i++) {
+      await page.keyboard.press("Tab");
+      const where = await page.evaluate(() => {
+        const el = document.activeElement;
+        return {
+          inChart: !!el?.closest('[data-testid$="-chart"]'),
+          inBacktestTable: !!el?.closest('[data-testid="backtest-table"]'),
+        };
+      });
+      expect(where.inChart).toBe(false);
+      reachedTable = where.inBacktestTable;
     }
+    // 2つのグラフのあとにある、試した結果の表まで届いたこと(Tab の順がグラフを通り過ぎた証拠)
+    expect(reachedTable).toBe(true);
   });
 
   test("AC-004-02: 記録が0日なら「まだ記録がありません」と出す", async ({ page }) => {

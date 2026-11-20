@@ -9,6 +9,7 @@ import { formatSignedJpy, formatSignedRatio } from "@/components/dashboard/dashb
 import { formatDateJa, formatEasternDateTime, formatJpy } from "@/components/settings/format";
 import { cn } from "@/components/ui/cn";
 import { useRemoveChartLayersFromTabOrder } from "@/components/ui/use-chart-tab-order";
+import { pnlAxis } from "./results-model";
 
 type LoadState = { status: "loading" } | { status: "error" } | { status: "ready"; view: View };
 
@@ -140,13 +141,6 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-/** 軸の端を切りのよい値にする(-86 は -90、1,234 は 2,000) */
-function roundAway(v: number): number {
-  if (v === 0) return 0;
-  const step = 10 ** Math.floor(Math.log10(Math.abs(v)));
-  return Math.sign(v) * Math.ceil(Math.abs(v) / step) * step;
-}
-
 const tone = (v: number) => (v > EPSILON ? "up" : v < -EPSILON ? "down" : "flat");
 const shortDate = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 
@@ -156,10 +150,7 @@ function DailyChart({ rows, idPrefix }: { rows: ResultRow[]; idPrefix: string })
   const plus = rows.filter((r) => tone(r.pnlJpy) === "up").length;
   const minus = rows.filter((r) => tone(r.pnlJpy) === "down").length;
   const data = rows.map((r) => ({ date: shortDate(r.date), pnl: r.pnlJpy }));
-  // 軸は 0円を必ず入れ、切りのよい端と、その半分に目盛りを置く
-  const lo = Math.min(0, roundAway(Math.min(...rows.map((r) => r.pnlJpy))));
-  const hi = Math.max(0, roundAway(Math.max(...rows.map((r) => r.pnlJpy))));
-  const ticks = [...new Set([lo, lo / 2, 0, hi / 2, hi])].sort((a, b) => a - b);
+  const axis = pnlAxis(rows.map((r) => r.pnlJpy));
   return (
     <figure className={cn(card, "m-0")}>
       <h3 className="text-[15px] font-semibold">日ごとの損益</h3>
@@ -174,8 +165,8 @@ function DailyChart({ rows, idPrefix }: { rows: ResultRow[]; idPrefix: string })
               stroke="var(--color-border)"
               width={56}
               // 0円を必ず入れる(1日だけの時も、棒が0円から上か下に伸びて見えるように。AC-004-06)
-              domain={[lo, hi]}
-              ticks={ticks}
+              domain={axis.domain}
+              ticks={axis.ticks}
               tickFormatter={(v: number) => `${Math.round(v)}円`}
             />
             <ReferenceLine y={0} stroke="var(--color-input)" />
