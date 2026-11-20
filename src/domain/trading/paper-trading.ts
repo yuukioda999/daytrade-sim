@@ -87,7 +87,12 @@ export function buyingPowerJpy(a: Account): number {
 
 /** 今日の損失の上限に達したか(定義 9)。売り終わった分だけで数える */
 export function dailyLossLimitReached(a: Account): boolean {
-  return a.realizedTodayJpy + a.principal * DAILY_LOSS_LIMIT_RATIO <= EPSILON;
+  return lossLimitReachedJpy(a.realizedTodayJpy, a.principal);
+}
+
+/** 今日の売り終わった分の損益と元手から、今日の損失の上限に達したか(定義 9) */
+export function lossLimitReachedJpy(realizedTodayJpy: number, principalJpy: number): boolean {
+  return realizedTodayJpy + principalJpy * DAILY_LOSS_LIMIT_RATIO <= EPSILON;
 }
 
 /** 株数: 予算 / (買値 × 為替) を小数4桁で切り捨てる(定義 2) */

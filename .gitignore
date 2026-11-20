@@ -1,6 +1,7 @@
 # 依存とビルドの成果物
 node_modules/
 .next/
+.next-e2e-dashboard/
 out/
 dist/
 coverage/
@@ -13,6 +14,7 @@ coverage/
 data/
 # 画面のテストが使う DB
 .e2e/
+.e2e-dashboard/
 
 # テストの成果物
 playwright-report/

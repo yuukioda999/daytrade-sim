@@ -55,6 +55,16 @@ export function nextTradingDate(date: string): string {
   throw new Error(`${date} の後14日に取引日がありません`);
 }
 
+/** date より前の、最後の取引日(米国東部時間の暦日)。休みの日の表にない年に入るとエラー。 */
+export function previousTradingDate(date: string): string {
+  let d = addDays(date, -1);
+  for (let i = 0; i < 14; i++) {
+    if (closedReason(d) === null) return d;
+    d = addDays(d, -1);
+  }
+  throw new Error(`${date} の前14日に取引日がありません`);
+}
+
 function addDays(date: string, days: number): string {
   const t = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
   return new Date(t).toISOString().slice(0, 10);

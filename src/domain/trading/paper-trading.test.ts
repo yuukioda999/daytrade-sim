@@ -6,6 +6,7 @@ import {
   balanceJpy,
   buyingPowerJpy,
   dailyLossLimitReached,
+  lossLimitReachedJpy,
   enter,
   exitThreshold,
   isLastBarOfSession,
@@ -124,6 +125,13 @@ describe("SPEC-003 自動の練習売買", () => {
       const a = { ...fresh(), realizedTodayJpy: -1000 };
       expect(dailyLossLimitReached(a)).toBe(true);
       expect(enter(a, { session, symbol: "TQQQ", nextBar: bar("10:00", 78, 78, 78, 78), stopPrice: 77 }).kind).toBe("skipped");
+    });
+
+    it("損益と元手からの判定も同じ境界(ダッシュボードの AC-007-17)", () => {
+      expect(lossLimitReachedJpy(-1000, 10_000)).toBe(true);
+      expect(lossLimitReachedJpy(-999, 10_000)).toBe(false);
+      expect(lossLimitReachedJpy(0, 10_000)).toBe(false);
+      expect(lossLimitReachedJpy(-1500, 10_000)).toBe(true);
     });
 
     it("今日の損失が上限の手前(-999円)なら、新しく買う", () => {

@@ -7,6 +7,7 @@ import {
   isMarketOpen,
   nextTradingDate,
   orbBarStarts,
+  previousTradingDate,
   sessionOn,
 } from "./market-calendar";
 
@@ -153,5 +154,21 @@ describe("次の取引日(SPEC-006 AC-006-15 の前提)", () => {
 
   it("休場日の表にない年に入る時はエラー", () => {
     expect(() => nextTradingDate("2027-12-31")).toThrow(CalendarOutOfRangeError);
+  });
+});
+
+describe("前の取引日(ダッシュボードの前日の終値、T10)", () => {
+  it.each([
+    ["2026-11-03", "2026-11-02", "平日"],
+    ["2026-11-02", "2026-10-30", "月曜日は前の週の金曜日"],
+    ["2026-11-27", "2026-11-25", "感謝祭(11/26)を飛ばす"],
+    ["2026-11-30", "2026-11-27", "短縮取引日も取引日"],
+    ["2026-01-02", "2025-12-31", "元日を飛ばして前の年へ"],
+  ])("%s の前の取引日は %s(%s)", (date, expected) => {
+    expect(previousTradingDate(date)).toBe(expected);
+  });
+
+  it("休場日の表にない年に入る時はエラー", () => {
+    expect(() => previousTradingDate("2025-01-01")).toThrow(CalendarOutOfRangeError);
   });
 });

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isSameDbFile } from "./market-data-factory";
+import { fixedNowFromEnv, isSameDbFile } from "./market-data-factory";
 
 /** 環境変数を変えて、container を毎回読み直す(中で一度だけ作って使い回すため) */
 async function loadContainer(env: Record<string, string | undefined>) {
@@ -54,5 +54,30 @@ describe("同じ DB ファイルかの判定(T9 のセキュリティレビュ�
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("画面のテストの止まった時計(T10)", () => {
+  const fake = { DAYTRADE_FAKE_MARKET_DATA: "1", DAYTRADE_DB_PATH: ".e2e/test.db" };
+
+  it("指定がなければ本物の時計を使う", () => {
+    expect(fixedNowFromEnv({ ...fake })).toBeNull();
+  });
+
+  it("テスト用の取得元と別の DB ファイルの時だけ、止まった時計を使う", () => {
+    expect(fixedNowFromEnv({ ...fake, DAYTRADE_FAKE_NOW: "2026-11-02T15:17:30Z" })?.toISOString()).toBe("2026-11-02T15:17:30.000Z");
+  });
+
+  it("本物の取得元や既定の DB と一緒に指定したら、本物の時計に戻さずに断る", () => {
+    expect(() => fixedNowFromEnv({ DAYTRADE_FAKE_NOW: "2026-11-02T15:17:30Z" })).toThrow();
+    expect(() => fixedNowFromEnv({ DAYTRADE_FAKE_MARKET_DATA: "1", DAYTRADE_FAKE_NOW: "2026-11-02T15:17:30Z" })).toThrow();
+    expect(() =>
+      fixedNowFromEnv({ DAYTRADE_FAKE_MARKET_DATA: "1", DAYTRADE_DB_PATH: "data/daytrade.db", DAYTRADE_FAKE_NOW: "2026-11-02T15:17:30Z" }),
+    ).toThrow();
+  });
+
+  it("時刻の形が正しくなければ断る", () => {
+    expect(() => fixedNowFromEnv({ ...fake, DAYTRADE_FAKE_NOW: "tomorrow" })).toThrow();
+    expect(() => fixedNowFromEnv({ ...fake, DAYTRADE_FAKE_NOW: "2026-13-02T15:17:30Z" })).toThrow();
   });
 });

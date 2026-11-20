@@ -40,6 +40,8 @@ export const WORKER_MESSAGES = {
 } as const;
 
 export type WorkerDeps = { repos: Repositories; source: MarketDataSource };
+/** 保存しているものだけを読む処理が使うもの(通信しない) */
+export type StoredDeps = Pick<WorkerDeps, "repos">;
 
 
 function setStatus(deps: WorkerDeps, now: Date, state: WorkerState, message: string, lastBarReceivedAt?: Date): void {
@@ -53,7 +55,7 @@ function setStatus(deps: WorkerDeps, now: Date, state: WorkerState, message: str
 }
 
 /** 自動売買の ON / OFF の、ある時刻の状態(ADR-0009)。履歴は必ず ON と OFF が入れ替わる */
-export function autoTradingAtFactory(deps: WorkerDeps): (t: Date) => boolean {
+export function autoTradingAtFactory(deps: StoredDeps): (t: Date) => boolean {
   const changes = deps.repos.settings.listAutoTradingChanges();
   const fallback = deps.repos.settings.getAutoTradingEnabled() ?? true;
   return (t) => {
@@ -68,7 +70,7 @@ export function autoTradingAtFactory(deps: WorkerDeps): (t: Date) => boolean {
 }
 
 /** ある取引日の足(通常の取引時間)を、銘柄ごとに読み出す */
-function dayBars(deps: WorkerDeps, session: MarketSession): Record<string, SymbolBar[]> {
+function dayBars(deps: StoredDeps, session: MarketSession): Record<string, SymbolBar[]> {
   const result: Record<string, SymbolBar[]> = {};
   for (const symbol of WATCHLIST) {
     result[symbol] = deps.repos.bars.barsBetween(symbol, session.open, session.close);
@@ -77,7 +79,7 @@ function dayBars(deps: WorkerDeps, session: MarketSession): Record<string, Symbo
 }
 
 /** 取引量の基準に使う過去の日の足。日を始めた時に決めた日だけを使う(SPEC-002 決めたこと 4) */
-function pastDaysOf(deps: WorkerDeps, symbol: string, dates: readonly string[]): PastDay[] {
+function pastDaysOf(deps: StoredDeps, symbol: string, dates: readonly string[]): PastDay[] {
   return dates.flatMap((d) => {
     const s = sessionOn(d);
     return s ? [{ date: d, bars: deps.repos.bars.barsBetween(symbol, s.open, s.close) }] : [];
@@ -174,12 +176,20 @@ async function fetchDayBars(deps: WorkerDeps, session: MarketSession, now: Date)
   return saved;
 }
 
-/** その日を作り直して、記録を置き換える(ADR-0009)。closeOut なら売っていない株を売って締める */
-export function rebuildDay(deps: WorkerDeps, run: DayRun, closeOut: boolean, now: Date): void {
+export type ComputedDay = {
+  session: MarketSession;
+  bars: Record<string, SymbolBar[]>;
+  pastDays: Map<string, PastDay[]>;
+  result: ReturnType<typeof replayDay>;
+  records: TradeRecord[];
+};
+
+/** その日を足から作り直した結果(保存はしない)。画面(T10)もこれを使う(ADR-0009) */
+export function computeDay(deps: StoredDeps, run: DayRun, closeOut: boolean, now: Date): ComputedDay {
   const session = sessionOn(run.date);
   if (!session) throw new Error(`${run.date} は取引日ではありません`);
   const bars = dayBars(deps, session);
-  const past = new Map(WATCHLIST.map((s) => [s, pastDaysOf(deps, s, run.baselineDates[s] ?? [])] as const));
+  const past = new Map<string, PastDay[]>(WATCHLIST.map((s) => [s, pastDaysOf(deps, s, run.baselineDates[s] ?? [])]));
   const autoTradingAt = autoTradingAtFactory(deps);
   const findBar = (symbol: string, start: Date) => bars[symbol].find((b) => b.start.getTime() === start.getTime());
   const account = {
@@ -190,7 +200,7 @@ export function rebuildDay(deps: WorkerDeps, run: DayRun, closeOut: boolean, now
     session,
     account,
     bars,
-    pastVolumes: (symbol, start) => sameTimeVolumes(past.get(symbol as (typeof WATCHLIST)[number]) ?? [], start),
+    pastVolumes: (symbol, start) => sameTimeVolumes(past.get(symbol) ?? [], start),
     // その足を受け取った時刻の ON / OFF で決める。受け取った時刻がない足(過去データの取得で入れた足)は、
     // 今作り直している時刻で決める(ADR-0009、T9 のレビュー 2)
     buyingAllowed: (symbol, start) => autoTradingAt(findBar(symbol, start)?.receivedAt ?? now),
@@ -224,6 +234,12 @@ export function rebuildDay(deps: WorkerDeps, run: DayRun, closeOut: boolean, now
         (t !== undefined && t.reason === "close" && t.exitTime.getTime() !== lastBarStart && lateCloseOut),
     };
   });
+  return { session, bars, pastDays: past, result, records };
+}
+
+/** その日を作り直して、記録を置き換える(ADR-0009)。closeOut なら売っていない株を売って締める */
+export function rebuildDay(deps: WorkerDeps, run: DayRun, closeOut: boolean, now: Date): void {
+  const { bars, records } = computeDay(deps, run, closeOut, now);
   deps.repos.trading.replaceDayTrades(run.date, records);
   if (closeOut) {
     deps.repos.trading.putDayRun({ ...run, closed: true });
