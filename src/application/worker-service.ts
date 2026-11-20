@@ -1,5 +1,4 @@
 import { regularSessionBars } from "@/domain/history/import-plan";
-import type { Bar } from "@/domain/market/bar";
 import { toEastern } from "@/domain/market/eastern-time";
 import { CalendarOutOfRangeError, closedReason, sessionOn, type MarketSession } from "@/domain/market/market-calendar";
 import { WATCHLIST } from "@/domain/market/symbols";
@@ -14,6 +13,7 @@ import {
   MarketDataError,
   type DayRun,
   type MarketDataSource,
+  type SymbolBar,
   type Repositories,
   type TradeRecord,
   type WorkerState,
@@ -30,8 +30,6 @@ const CLOSE_WAIT_MS = 30 * MINUTE;
  * 足の長さ 5分 + データの遅れ 15分 + 余裕 10分
  */
 const LATE_AFTER_MS = 30 * MINUTE;
-/** 足りない過去の足を取りに行く間隔(取れない時に毎分通信しないため) */
-const BACKFILL_RETRY_MS = 30 * MINUTE;
 
 export const WORKER_MESSAGES = {
   running: "動いています",
@@ -43,12 +41,6 @@ export const WORKER_MESSAGES = {
 
 export type WorkerDeps = { repos: Repositories; source: MarketDataSource };
 
-/** ワーカーのプロセスの中だけで覚えておくこと(DB に書かない) */
-export type WorkerMemory = { lastBackfillAttempt: Map<string, number> };
-
-export function newWorkerMemory(): WorkerMemory {
-  return { lastBackfillAttempt: new Map() };
-}
 
 function setStatus(deps: WorkerDeps, now: Date, state: WorkerState, message: string, lastBarReceivedAt?: Date): void {
   const prev = deps.repos.trading.getWorkerStatus();
@@ -60,8 +52,8 @@ function setStatus(deps: WorkerDeps, now: Date, state: WorkerState, message: str
   });
 }
 
-/** 自動売買の ON / OFF の、ある時刻の状態(ADR-0009) */
-export function buyingAllowedAtFactory(deps: WorkerDeps): (t: Date) => boolean {
+/** 自動売買の ON / OFF の、ある時刻の状態(ADR-0009)。履歴は必ず ON と OFF が入れ替わる */
+export function autoTradingAtFactory(deps: WorkerDeps): (t: Date) => boolean {
   const changes = deps.repos.settings.listAutoTradingChanges();
   const fallback = deps.repos.settings.getAutoTradingEnabled() ?? true;
   return (t) => {
@@ -76,17 +68,17 @@ export function buyingAllowedAtFactory(deps: WorkerDeps): (t: Date) => boolean {
 }
 
 /** ある取引日の足(通常の取引時間)を、銘柄ごとに読み出す */
-function dayBars(deps: WorkerDeps, session: MarketSession): Record<string, Bar[]> {
-  const result: Record<string, Bar[]> = {};
+function dayBars(deps: WorkerDeps, session: MarketSession): Record<string, SymbolBar[]> {
+  const result: Record<string, SymbolBar[]> = {};
   for (const symbol of WATCHLIST) {
     result[symbol] = deps.repos.bars.barsBetween(symbol, session.open, session.close);
   }
   return result;
 }
 
-/** 取引量の基準に使う、過去の取り終えた日の足(最大20日) */
-function pastDaysOf(deps: WorkerDeps, symbol: string, date: string): PastDay[] {
-  return deps.repos.bars.fetchedDatesBefore(symbol, date, VOLUME_LOOKBACK_DAYS).flatMap((d) => {
+/** 取引量の基準に使う過去の日の足。日を始めた時に決めた日だけを使う(SPEC-002 決めたこと 4) */
+function pastDaysOf(deps: WorkerDeps, symbol: string, dates: readonly string[]): PastDay[] {
+  return dates.flatMap((d) => {
     const s = sessionOn(d);
     return s ? [{ date: d, bars: deps.repos.bars.barsBetween(symbol, s.open, s.close) }] : [];
   });
@@ -111,12 +103,10 @@ function previousTradingDays(date: string, n: number): string[] {
 
 /**
  * 取引量の基準のために、過去20取引日の足のうち、取っていない日を Alpaca から取って埋める(ADR-0009)。
- * 取れなくても売買は止めない(基準は、ある日数で平均する。SPEC-002 定義 4)
+ * 1回でも失敗したら、その日はそこでやめる(キーが違う時などに通信を続けないため)。
+ * 取れなくても売買は止めない(基準は、取れた日数で平均する。SPEC-002 定義 4)
  */
-async function backfillPastDays(deps: WorkerDeps, memory: WorkerMemory, today: string, now: Date): Promise<void> {
-  const last = memory.lastBackfillAttempt.get(today);
-  if (last !== undefined && now.getTime() - last < BACKFILL_RETRY_MS) return;
-  memory.lastBackfillAttempt.set(today, now.getTime());
+async function backfillPastDays(deps: WorkerDeps, today: string, now: Date): Promise<void> {
   const days = previousTradingDays(today, VOLUME_LOOKBACK_DAYS);
   if (days.length === 0) return;
   for (const symbol of WATCHLIST) {
@@ -125,9 +115,21 @@ async function backfillPastDays(deps: WorkerDeps, memory: WorkerMemory, today: s
     const months = new Map<string, string[]>();
     for (const d of missing) months.set(d.slice(0, 7), [...(months.get(d.slice(0, 7)) ?? []), d]);
     for (const list of months.values()) {
-      await importChunk(deps.repos, deps.source, { symbol, from: list[0], to: list[list.length - 1] }, now);
+      const r = await importChunk(deps.repos, deps.source, { symbol, from: list[0], to: list[list.length - 1] }, now);
+      if (!r.ok) return;
     }
   }
+}
+
+/** その日の取引量の基準に使う過去の日を決める。直前の20取引日のうち、取り終えている日(SPEC-002 決めたこと 4) */
+function baselineDatesFor(deps: WorkerDeps, today: string): Record<string, string[]> {
+  const days = previousTradingDays(today, VOLUME_LOOKBACK_DAYS);
+  const result: Record<string, string[]> = {};
+  for (const symbol of WATCHLIST) {
+    const done = days.length > 0 ? new Set(deps.repos.bars.fetchedDates(symbol, days[0], days[days.length - 1])) : new Set();
+    result[symbol] = days.filter((d) => done.has(d));
+  }
+  return result;
 }
 
 /** その日を始める。元手と為替を決めて記録する(SPEC-006 決めたこと 6、SPEC-003 定義 12) */
@@ -147,6 +149,7 @@ function startDayRun(deps: WorkerDeps, today: string, now: Date): DayRun {
     principalJpy: money.principalJpy,
     fxRateX100: money.fxRateX100,
     startingRealizedJpy: deps.repos.trading.realizedBefore(today),
+    baselineDates: baselineDatesFor(deps, today),
     closed: false,
     startedAt: now,
   };
@@ -176,7 +179,9 @@ export function rebuildDay(deps: WorkerDeps, run: DayRun, closeOut: boolean, now
   const session = sessionOn(run.date);
   if (!session) throw new Error(`${run.date} は取引日ではありません`);
   const bars = dayBars(deps, session);
-  const past = new Map(WATCHLIST.map((s) => [s, pastDaysOf(deps, s, run.date)] as const));
+  const past = new Map(WATCHLIST.map((s) => [s, pastDaysOf(deps, s, run.baselineDates[s] ?? [])] as const));
+  const autoTradingAt = autoTradingAtFactory(deps);
+  const findBar = (symbol: string, start: Date) => bars[symbol].find((b) => b.start.getTime() === start.getTime());
   const account = {
     ...newAccount(run.principalJpy, fxRateFromX100(run.fxRateX100), run.date),
     realizedTotalJpy: run.startingRealizedJpy,
@@ -186,15 +191,16 @@ export function rebuildDay(deps: WorkerDeps, run: DayRun, closeOut: boolean, now
     account,
     bars,
     pastVolumes: (symbol, start) => sameTimeVolumes(past.get(symbol as (typeof WATCHLIST)[number]) ?? [], start),
-    buyingAllowedAt: buyingAllowedAtFactory(deps),
+    // その足を受け取った時刻の ON / OFF で決める。受け取った時刻がない足(過去データの取得で入れた足)は、
+    // 今作り直している時刻で決める(ADR-0009、T9 のレビュー 2)
+    buyingAllowed: (symbol, start) => autoTradingAt(findBar(symbol, start)?.receivedAt ?? now),
     closeOut,
   });
 
-  const receivedAt = (symbol: string, start: Date): Date | undefined =>
-    (bars[symbol] as { start: Date; receivedAt?: Date }[]).find((b) => b.start.getTime() === start.getTime())?.receivedAt;
+  // 受け取った時刻がない足は、自動売買が時間どおりに受け取ったものではないので「あとから処理」とする(T9 のレビュー 5)
   const isLate = (symbol: string, start: Date): boolean => {
-    const r = receivedAt(symbol, start);
-    return r !== undefined && r.getTime() - start.getTime() > LATE_AFTER_MS;
+    const r = findBar(symbol, start)?.receivedAt;
+    return r === undefined || r.getTime() - start.getTime() > LATE_AFTER_MS;
   };
 
   // 届いた最後の足で締めて売った時(最後の足が届かなかった時)、締めたのが取引終了から30分より大きく遅れたら、あとから処理した印を付ける
@@ -237,7 +243,13 @@ async function closeUnfinishedDays(deps: WorkerDeps, today: string, now: Date): 
     if (run.closed || run.date >= today) continue;
     const session = sessionOn(run.date);
     if (!session) continue;
-    await fetchDayBars(deps, session, now);
+    // 残りの足を取れなくても、届いている最後の足で締める(SPEC-003 定義 14、T9 のレビュー 4)
+    try {
+      await fetchDayBars(deps, session, now);
+    } catch (e) {
+      if (!(e instanceof MarketDataError)) throw e;
+      console.warn(`市場データの取得に失敗しました(${e.kind})`);
+    }
     rebuildDay(deps, run, true, now);
   }
 }
@@ -246,8 +258,13 @@ async function closeUnfinishedDays(deps: WorkerDeps, today: string, now: Date): 
  * ワーカーの1回分の処理(1分ごとに呼ぶ。ADR-0007、ADR-0009)。
  * 取引時間中は、今日の足を取り、今日の記録を作り直す
  */
-export async function runTick(deps: WorkerDeps, memory: WorkerMemory, now: Date): Promise<void> {
+export async function runTick(deps: WorkerDeps, now: Date): Promise<void> {
   const today = toEastern(now).date;
+  const hasCredentials = deps.repos.credentials.get() !== null;
+
+  // 締める前に止まった前の日は、休場日の表が古い時やキーがない時も締める(T9 のレビュー 4、13)
+  await closeUnfinishedDays(deps, today, now);
+
   let session: MarketSession | null;
   try {
     session = sessionOn(today);
@@ -258,37 +275,56 @@ export async function runTick(deps: WorkerDeps, memory: WorkerMemory, now: Date)
     }
     throw e;
   }
+  if (!session) {
+    setStatus(deps, now, hasCredentials ? "idle" : "no-credentials", hasCredentials ? WORKER_MESSAGES.closedDay : BLOCKED_NO_CREDENTIALS);
+    return;
+  }
+  const existing = deps.repos.trading.getDayRun(today);
+  const closeOut = now.getTime() >= session.close.getTime() + CLOSE_WAIT_MS;
 
-  if (!deps.repos.credentials.get()) {
+  if (!hasCredentials) {
+    // キーを消した日も、締める時刻になったら、届いている足で締める
+    if (existing && !existing.closed && closeOut) rebuildDay(deps, existing, true, now);
     setStatus(deps, now, "no-credentials", BLOCKED_NO_CREDENTIALS);
+    return;
+  }
+  if (now.getTime() < session.open.getTime()) {
+    setStatus(deps, now, "idle", WORKER_MESSAGES.beforeOpen);
+    return;
+  }
+  // 取引時間が終わってから初めて動いた日は、その日を記録しない(取引時間中に動いていないため。ADR-0009)
+  if (!existing && now.getTime() >= session.close.getTime()) {
+    setStatus(deps, now, "idle", WORKER_MESSAGES.dayDone);
+    return;
+  }
+  if (existing?.closed) {
+    setStatus(deps, now, "idle", WORKER_MESSAGES.dayDone);
     return;
   }
 
   try {
-    await closeUnfinishedDays(deps, today, now);
-    if (!session) {
-      setStatus(deps, now, "idle", WORKER_MESSAGES.closedDay);
+    let run = existing;
+    if (!run) {
+      // 取引量の基準に使う過去の日を、足りない分を埋めてから決める(この日の間は変えない)
+      await backfillPastDays(deps, today, now);
+      run = startDayRun(deps, today, now);
+    }
+    let saved = 0;
+    let fetchError: MarketDataError | null = null;
+    try {
+      saved = await fetchDayBars(deps, session, now);
+    } catch (e) {
+      if (!(e instanceof MarketDataError)) throw e;
+      fetchError = e;
+    }
+    // データを取れない時も、締める時刻なら届いている足で締める(SPEC-003 定義 14)
+    if (!fetchError || closeOut) rebuildDay(deps, run, closeOut, now);
+    if (fetchError) {
+      // データを取れない間は、新しい足がないので練習売買も進まない(ADR-0005、AC-007-10)
+      setStatus(deps, now, "data-error", `データを取得できていません。練習売買はしていません。${marketDataErrorMessage(fetchError.kind)}`);
+      console.warn(`市場データの取得に失敗しました(${fetchError.kind})`);
       return;
     }
-    if (now.getTime() < session.open.getTime()) {
-      setStatus(deps, now, "idle", WORKER_MESSAGES.beforeOpen);
-      return;
-    }
-    const existing = deps.repos.trading.getDayRun(today);
-    // 取引時間が終わってから初めて動いた日は、その日を記録しない(取引時間中に動いていないため。ADR-0009)
-    if (!existing && now.getTime() >= session.close.getTime()) {
-      setStatus(deps, now, "idle", WORKER_MESSAGES.dayDone);
-      return;
-    }
-    if (existing?.closed) {
-      setStatus(deps, now, "idle", WORKER_MESSAGES.dayDone);
-      return;
-    }
-    const run = existing ?? startDayRun(deps, today, now);
-    await backfillPastDays(deps, memory, today, now);
-    const saved = await fetchDayBars(deps, session, now);
-    const closeOut = now.getTime() >= session.close.getTime() + CLOSE_WAIT_MS;
-    rebuildDay(deps, run, closeOut, now);
     setStatus(
       deps,
       now,
@@ -298,11 +334,15 @@ export async function runTick(deps: WorkerDeps, memory: WorkerMemory, now: Date)
     );
   } catch (e) {
     if (e instanceof MarketDataError) {
-      // データを取れない間は、新しい足がないので練習売買も進まない(ADR-0005、AC-007-10)
       setStatus(deps, now, "data-error", `データを取得できていません。練習売買はしていません。${marketDataErrorMessage(e.kind)}`);
       console.warn(`市場データの取得に失敗しました(${e.kind})`);
       return;
     }
     throw e;
   }
+}
+
+/** ワーカーのログに出すエラーの言葉。キーが入りうるので、エラーの中身は出さず、種類の名前だけにする(ADR-0006) */
+export function safeErrorLabel(e: unknown): string {
+  return `自動売買の処理でエラーが起きました(${e instanceof Error ? e.name : typeof e})`;
 }

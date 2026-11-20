@@ -71,6 +71,8 @@ export const dayRuns = sqliteTable("day_runs", {
   fxRateX100: integer("fx_rate_x100").notNull(),
   /** その日より前の損益の合計(円) */
   startingRealizedJpy: real("starting_realized_jpy").notNull(),
+  /** その日の取引量の基準に使う過去の取引日(銘柄ごと。日を始めた時に決めて変えない。JSON) */
+  baselineDatesJson: text("baseline_dates_json").notNull().default("{}"),
   /** その日を締めたか(SPEC-003 定義 14) */
   closed: integer("closed", { mode: "boolean" }).notNull(),
   startedAt: text("started_at").notNull(),

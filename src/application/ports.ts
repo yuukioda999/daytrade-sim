@@ -52,6 +52,8 @@ export type DayRun = {
   fxRateX100: number;
   /** その日より前の損益の合計(円) */
   startingRealizedJpy: number;
+  /** その日の取引量の基準に使う過去の取引日(銘柄ごと)。日を始めた時に決めて変えない(SPEC-002 決めたこと 4) */
+  baselineDates: Record<string, string[]>;
   /** その日を締めたか */
   closed: boolean;
   startedAt: Date;

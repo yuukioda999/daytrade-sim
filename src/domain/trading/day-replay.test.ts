@@ -29,7 +29,7 @@ function input(over: Partial<ReplayInput> = {}): ReplayInput {
     account: newAccount(10_000, 150, DATE),
     bars: { SOXL },
     pastVolumes: () => [60],
-    buyingAllowedAt: () => true,
+    buyingAllowed: () => true,
     closeOut: false,
     ...over,
   };
@@ -55,12 +55,17 @@ describe("その日を足から作り直す(ADR-0009)", () => {
     expect(r.openPositions).toEqual([]);
   });
 
-  it("AC-003-09、10: 足を1本ずつ足して何度作り直しても、最後は一度に処理した時と同じ記録になる", () => {
+  it("AC-003-09、10: 足を1本ずつ足して何度作り直しても、前の記録は変わらず、最後は一度に処理した時と同じ記録になる", () => {
     const all = replayDay(input());
-    for (let n = 1; n <= SOXL.length; n++) {
+    let prev = replayDay(input({ bars: { SOXL: SOXL.slice(0, 1) } }));
+    for (let n = 2; n <= SOXL.length; n++) {
       const partial = replayDay(input({ bars: { SOXL: SOXL.slice(0, n) } }));
-      if (n === SOXL.length) expect(partial).toEqual(all);
+      // 足が増えても、それまでの買いと売りは同じまま(あとから過去が変わらない)
+      expect(partial.buys.slice(0, prev.buys.length)).toEqual(prev.buys);
+      expect(partial.trades.slice(0, prev.trades.length)).toEqual(prev.trades);
+      prev = partial;
     }
+    expect(prev).toEqual(all);
     // 同じ入力で2回作り直しても同じ
     expect(replayDay(input())).toEqual(all);
   });
@@ -73,7 +78,7 @@ describe("その日を足から作り直す(ADR-0009)", () => {
 
   it("AC-006-01: 自動売買を OFF にしたあとの足では新しく買わない", () => {
     const off = fromEastern(DATE, 9, 47);
-    const r = replayDay(input({ buyingAllowedAt: (t) => t.getTime() < off.getTime() }));
+    const r = replayDay(input({ buyingAllowed: (_s, t) => t.getTime() < off.getTime() }));
     expect(r.buys).toEqual([]);
     expect(r.skips).toEqual([
       { symbol: "SOXL", signalBarStart: fromEastern(DATE, 9, 45), barStart: fromEastern(DATE, 9, 50), reason: "auto-trading-off" },
@@ -82,7 +87,7 @@ describe("その日を足から作り直す(ADR-0009)", () => {
 
   it("AC-006-01: OFF にしても、持っている株の売りの判定は続ける", () => {
     const off = fromEastern(DATE, 9, 52);
-    const r = replayDay(input({ buyingAllowedAt: (t) => t.getTime() < off.getTime() }));
+    const r = replayDay(input({ buyingAllowed: (_s, t) => t.getTime() < off.getTime() }));
     expect(r.buys).toHaveLength(1);
     expect(r.trades.map((t) => t.reason)).toEqual(["stop"]);
   });
@@ -101,12 +106,39 @@ describe("その日を足から作り直す(ADR-0009)", () => {
     expect(replayDay(input({ pastVolumes: () => [] })).buys).toEqual([]);
   });
 
-  it("同じ時刻の足は監視リストの順に処理し、銘柄ごとに1日1回だけ買う", () => {
-    const shifted = (b: Bar): Bar => ({ ...b });
-    const r = replayDay(input({ bars: { TQQQ: SOXL.map(shifted), SOXL } }));
+  it("同じ時刻の買いは監視リストの順で、2つ目は1つ目を買ったあとの「買いに使える残り」で決まる", () => {
+    const r = replayDay(input({ account: newAccount(8_000, 150, DATE), bars: { TQQQ: SOXL.map((b) => ({ ...b })), SOXL } }));
     expect(r.buys.map((b) => b.symbol)).toEqual(["SOXL", "TQQQ"]);
-    // 2つ目は、1つ目を買ったあとの「買いに使える残り」で決まる(元手の50%ずつ)
-    expect(r.buys[1].shares).toBe(0.4248);
+    // 予算は 4,000円ずつ。1つ目の買付額 0.3399株 × 78.45 × 150 = 3,999.7...円 のあと、残り 4,000.2...円
+    expect(r.buys[0].shares).toBe(0.3399);
+    expect(r.buys[1].shares).toBe(0.3399);
+  });
+
+  it("SPEC-003 定義 15: 同じ足で、先の銘柄が売って空くお金を、その足の始値で買う銘柄は使えない", () => {
+    // SOXL と TQQQ が 09:50 に買い(使えるお金はほぼ残らない)、09:55 に SOXL が損切り。
+    // NVDL は1本遅れて 09:50 に買いサインが出て、09:55 の始値で買う。この時点では SOXL の売りのお金はまだ使えない
+    const nvdl: Bar[] = [
+      ...SOXL.slice(0, 3),
+      bar("09:45", 77.45, 77.8, 77.4, 77.5, 50, 77.6),
+      bar("09:50", 77.5, 78.05, 77.7, 78.0, 120, 77.9),
+      bar("09:55", 78.45, 78.6, 78.3, 78.5, 100),
+    ];
+    const r = replayDay(input({ bars: { SOXL, TQQQ: SOXL.map((b) => ({ ...b })), NVDL: nvdl } }));
+    const nvdlBuy = r.buys.find((b) => b.symbol === "NVDL");
+    // 残りは 10,000 − 4,998.83 × 2 = 2.33円 → 0.0001株(定義 2 で、0 でなければ買う)
+    expect(nvdlBuy?.shares).toBe(0.0001);
+  });
+
+  it("AC-003-08: 今日の損失が上限に達したあとの買いサインでは買わない。持っている株の売りは続ける", () => {
+    // SOXL は 09:55 に始値 60 で大きく下がって売る(損失 1,175円 > 上限 1,000円)
+    const crash = [...SOXL.slice(0, 5), bar("09:55", 60, 60.5, 59, 60)];
+    const late = (b: Bar): Bar => ({ ...b, start: new Date(b.start.getTime() + 15 * 60_000) });
+    // TQQQ は 15分遅れで同じ形(10:00 に買いサイン、10:05 に買う足)
+    const tqqq = [...SOXL.slice(0, 3), ...[bar("09:45", 77.45, 77.8, 77.4, 77.5, 10), bar("09:50", 77.5, 77.8, 77.4, 77.5, 10), bar("09:55", 77.5, 77.8, 77.4, 77.5, 10)], ...SOXL.slice(3).map(late)];
+    const r = replayDay(input({ bars: { SOXL: crash, TQQQ: tqqq } }));
+    expect(r.trades[0].pnlJpy).toBeLessThan(-1_000);
+    expect(r.buys.map((b) => b.symbol)).toEqual(["SOXL"]);
+    expect(r.skips).toContainEqual(expect.objectContaining({ symbol: "TQQQ", reason: "daily-loss-limit" }));
   });
 
   it("その日の始めの状態が違う日なら、エラーにする", () => {

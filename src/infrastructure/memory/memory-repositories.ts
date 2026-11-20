@@ -23,8 +23,9 @@ export class MemorySettingsRepository implements SettingsRepository {
     return this.autoTrading;
   }
   setAutoTradingEnabled(enabled: boolean): void {
+    const changed = (this.autoTrading ?? true) !== enabled;
     this.autoTrading = enabled;
-    this.changes.set(this.now().getTime(), enabled);
+    if (changed) this.changes.set(this.now().getTime(), enabled);
   }
   listAutoTradingChanges(): { at: Date; enabled: boolean }[] {
     return [...this.changes.entries()].sort(([a], [b]) => a - b).map(([at, enabled]) => ({ at: new Date(at), enabled }));

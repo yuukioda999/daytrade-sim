@@ -78,7 +78,11 @@ describe.each(IMPLEMENTATIONS)("%s の保存先", (_, create) => {
     const { settings } = create();
     clock = new Date("2026-11-20T15:00:00Z");
     settings.setAutoTradingEnabled(false);
+    clock = new Date("2026-11-20T15:30:00Z");
+    // 同じ値を保存し直しても、履歴は増えない(履歴は必ず ON と OFF が入れ替わる)
+    settings.setAutoTradingEnabled(false);
     clock = new Date("2026-11-20T16:00:00Z");
+    settings.setAutoTradingEnabled(true);
     settings.setAutoTradingEnabled(true);
     expect(settings.listAutoTradingChanges()).toEqual([
       { at: new Date("2026-11-20T15:00:00Z"), enabled: false },
@@ -137,6 +141,7 @@ describe.each(IMPLEMENTATIONS)("%s の保存先", (_, create) => {
       principalJpy: 10_000,
       fxRateX100: 15_000,
       startingRealizedJpy: -36.022,
+      baselineDates: { SOXL: ["2026-11-18", "2026-11-19"] },
       closed: false,
       startedAt: new Date("2026-11-20T14:30:00Z"),
     };

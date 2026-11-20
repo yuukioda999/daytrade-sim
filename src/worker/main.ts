@@ -1,4 +1,4 @@
-import { newWorkerMemory, runTick } from "@/application/worker-service";
+import { runTick, safeErrorLabel } from "@/application/worker-service";
 import { DEFAULT_DB_PATH, openDatabase } from "@/infrastructure/db/database";
 import { sqliteRepositories } from "@/infrastructure/db/sqlite-repositories";
 import { createMarketDataSource } from "@/infrastructure/market-data-factory";
@@ -14,7 +14,6 @@ const OFFSET_MS = 5_000;
 
 const repos = sqliteRepositories(openDatabase(process.env.DAYTRADE_DB_PATH || DEFAULT_DB_PATH));
 const source = createMarketDataSource();
-const memory = newWorkerMemory();
 
 let running = false;
 let stopping = false;
@@ -24,10 +23,9 @@ async function tick(): Promise<void> {
   if (running) return; // 前の回が終わっていなければ飛ばす(同時に2回動かない)
   running = true;
   try {
-    await runTick({ repos, source }, memory, new Date());
+    await runTick({ repos, source }, new Date());
   } catch (e) {
-    // キーが入りうるので、エラーの中身は出さず、種類の名前だけを出す(ADR-0006)
-    console.error(`自動売買の処理でエラーが起きました(${e instanceof Error ? e.name : typeof e})`);
+    console.error(safeErrorLabel(e));
   } finally {
     running = false;
   }

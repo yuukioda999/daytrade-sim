@@ -26,8 +26,11 @@ export type ReplayInput = {
   bars: Readonly<Record<string, readonly Bar[]>>;
   /** 足と同じ時刻に始まる、過去の取引日の取引量(古い順。SPEC-002 定義 4) */
   pastVolumes: (symbol: string, barStart: Date) => readonly number[];
-  /** その足で新しく買ってよいか(自動売買の ON / OFF。SPEC-006 AC-006-01) */
-  buyingAllowedAt: (barStart: Date) => boolean;
+  /**
+   * その銘柄のその足で新しく買ってよいか(自動売買の ON / OFF。SPEC-006 AC-006-01)。
+   * ワーカーは、その足を受け取った時刻の ON / OFF で決める(ADR-0009)
+   */
+  buyingAllowed: (symbol: string, barStart: Date) => boolean;
   /**
    * その日を締めるか。true なら、売っていない株を届いた最後の足で売る(SPEC-003 定義 14)。
    * 取引終了から30分たったあとに true にするのは呼ぶ側
@@ -87,41 +90,47 @@ export function replayDay(input: ReplayInput): ReplayResult {
   const seen = new Map<string, Bar[]>();
 
   for (const t of times) {
-    // 同じ時刻の足は、監視リストの順に処理する
-    for (const symbol of symbols) {
+    // 同じ時刻の足は、全銘柄の買い、全銘柄の売る判定、全銘柄の買いサインの判定、の順に処理する(SPEC-003 定義 15)。
+    // 足の始値で買う時点では、同じ足の途中で売って空くお金はまだ使えないため。買う順は監視リストの順
+    const atT = symbols.flatMap((symbol) => {
       const bar = input.bars[symbol].find((b) => b.start.getTime() === t);
-      if (!bar) continue;
+      return bar ? [{ symbol, bar }] : [];
+    });
 
-      // 1. 前の足で買いサインが出ていれば、この足の始値で買う(SPEC-003 定義 1)
+    // 1. 前の足で買いサインが出ていれば、この足の始値で買う(SPEC-003 定義 1)
+    for (const { symbol, bar } of atT) {
       const p = pending.get(symbol);
-      if (p) {
-        pending.delete(symbol);
-        if (!input.buyingAllowedAt(bar.start)) {
-          skips.push({ symbol, signalBarStart: p.signalBarStart, barStart: bar.start, reason: "auto-trading-off" });
-        } else {
-          const r = enter(account, { session, symbol, nextBar: bar, stopPrice: p.stopPrice });
-          account = r.account;
-          if (r.kind === "entered") {
-            buys.push({
-              symbol,
-              signalBarStart: p.signalBarStart,
-              entryTime: r.position.entryTime,
-              entryPrice: r.position.entryPrice,
-              shares: r.position.shares,
-              stopPrice: r.position.stopPrice,
-            });
-          } else {
-            skips.push({ symbol, signalBarStart: p.signalBarStart, barStart: bar.start, reason: r.reason });
-          }
-        }
+      if (!p) continue;
+      pending.delete(symbol);
+      if (!input.buyingAllowed(symbol, bar.start)) {
+        skips.push({ symbol, signalBarStart: p.signalBarStart, barStart: bar.start, reason: "auto-trading-off" });
+        continue;
       }
+      const r = enter(account, { session, symbol, nextBar: bar, stopPrice: p.stopPrice });
+      account = r.account;
+      if (r.kind === "entered") {
+        buys.push({
+          symbol,
+          signalBarStart: p.signalBarStart,
+          entryTime: r.position.entryTime,
+          entryPrice: r.position.entryPrice,
+          shares: r.position.shares,
+          stopPrice: r.position.stopPrice,
+        });
+      } else {
+        skips.push({ symbol, signalBarStart: p.signalBarStart, barStart: bar.start, reason: r.reason });
+      }
+    }
 
-      // 2. 持っている株の売る判定(買った足を含む。定義 6)
+    // 2. 持っている株の売る判定(買った足を含む。定義 6)
+    for (const { symbol, bar } of atT) {
       const sold = processBar(account, { symbol, bar, isLastBar: isLastBarOfSession(session, bar) });
       account = sold.account;
       if (sold.closed) trades.push(sold.closed);
+    }
 
-      // 3. この足で買いサインを判定する(SPEC-002)
+    // 3. この足で買いサインを判定する(SPEC-002)
+    for (const { symbol, bar } of atT) {
       const through = [...(seen.get(symbol) ?? []), bar];
       seen.set(symbol, through);
       const evaluation = evaluateBar({

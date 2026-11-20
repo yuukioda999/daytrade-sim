@@ -38,6 +38,8 @@ export class SqliteSettingsRepository implements SettingsRepository {
   }
 
   setAutoTradingEnabled(enabled: boolean): void {
+    // 同じ値を保存し直した時は、変えた時刻の履歴を書かない(履歴は必ず ON と OFF が入れ替わる。T9 のレビュー 6)
+    const changed = (this.getAutoTradingEnabled() ?? true) !== enabled;
     const now = this.now();
     const updatedAt = now.toISOString();
     this.db.transaction((tx) => {
@@ -46,6 +48,7 @@ export class SqliteSettingsRepository implements SettingsRepository {
         .onConflictDoUpdate({ target: appSettings.id, set: { autoTradingEnabled: enabled, updatedAt } })
         .run();
       // 変えた時刻の履歴(同じミリ秒に2回変えたら後の値)
+      if (!changed) return;
       tx.insert(autoTradingChanges)
         .values({ atMs: now.getTime(), enabled })
         .onConflictDoUpdate({ target: autoTradingChanges.atMs, set: { enabled } })
@@ -243,6 +246,7 @@ export class SqliteTradingRepository implements TradingRepository {
       principalJpy: run.principalJpy,
       fxRateX100: run.fxRateX100,
       startingRealizedJpy: run.startingRealizedJpy,
+      baselineDatesJson: JSON.stringify(run.baselineDates),
       closed: run.closed,
       startedAt: run.startedAt.toISOString(),
       updatedAt: this.now().toISOString(),
@@ -345,6 +349,7 @@ function toDayRun(r: typeof dayRuns.$inferSelect): DayRun {
     principalJpy: r.principalJpy,
     fxRateX100: r.fxRateX100,
     startingRealizedJpy: r.startingRealizedJpy,
+    baselineDates: JSON.parse(r.baselineDatesJson) as Record<string, string[]>,
     closed: r.closed,
     startedAt: new Date(r.startedAt),
   };

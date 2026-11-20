@@ -1,4 +1,8 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isSameDbFile } from "./market-data-factory";
 
 /** 環境変数を変えて、container を毎回読み直す(中で一度だけ作って使い回すため) */
 async function loadContainer(env: Record<string, string | undefined>) {
@@ -34,4 +38,21 @@ describe("市場データの取得元の切り替え(T8 のセキュリティレ
       expect(() => getMarketDataSource()).toThrow("既定の DB ファイル");
     },
   );
+});
+
+describe("同じ DB ファイルかの判定(T9 のセキュリティレビュー 1)", () => {
+  it("シンボリックリンクと、大文字と小文字の違いも同じとみなす", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "daytrade-"));
+    try {
+      mkdirSync(path.join(dir, "data"));
+      writeFileSync(path.join(dir, "data", "daytrade.db"), "");
+      symlinkSync(path.join(dir, "data"), path.join(dir, "link"));
+      const real = path.join(dir, "data", "daytrade.db");
+      expect(isSameDbFile(path.join(dir, "link", "daytrade.db"), real)).toBe(true);
+      expect(isSameDbFile(path.join(dir, "Data", "daytrade.db"), real)).toBe(true);
+      expect(isSameDbFile(path.join(dir, "data", "other.db"), real)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
