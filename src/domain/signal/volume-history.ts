@@ -1,5 +1,5 @@
 import type { Bar } from "@/domain/market/bar";
-import { fromEastern, toEastern } from "@/domain/market/eastern-time";
+import { toEastern } from "@/domain/market/eastern-time";
 import { sessionOn } from "@/domain/market/market-calendar";
 
 /** 過去の1取引日分の足(取り終えた日だけを渡す) */
@@ -13,11 +13,14 @@ export type PastDay = { date: string; bars: readonly Bar[] };
  */
 export function sameTimeVolumes(pastDays: readonly PastDay[], target: Date): number[] {
   const { hour, minute } = toEastern(target);
+  // 取引開始(09:30)からの分。どの日も取引開始は米国東部時間の 09:30 なので、その日の取引開始に足せば同じ時刻になる
+  // (日ごとに時刻を変換し直すより速い。過去データで試す時に何万回も呼ぶため。T11)
+  const sinceOpenMs = ((hour - 9) * 60 + (minute - 30)) * 60_000;
   const result: number[] = [];
   for (const day of [...pastDays].sort((a, b) => a.date.localeCompare(b.date))) {
     const session = sessionOn(day.date);
     if (!session) continue;
-    const t = fromEastern(day.date, hour, minute).getTime();
+    const t = session.open.getTime() + sinceOpenMs;
     if (t < session.open.getTime() || t >= session.close.getTime()) continue;
     const bar = day.bars.find((b) => b.start.getTime() === t);
     result.push(bar ? bar.volume : 0);

@@ -124,7 +124,7 @@ async function backfillPastDays(deps: WorkerDeps, today: string, now: Date): Pro
 }
 
 /** その日の取引量の基準に使う過去の日を決める。直前の20取引日のうち、取り終えている日(SPEC-002 決めたこと 4) */
-function baselineDatesFor(deps: WorkerDeps, today: string): Record<string, string[]> {
+export function baselineDatesFor(deps: StoredDeps, today: string): Record<string, string[]> {
   const days = previousTradingDays(today, VOLUME_LOOKBACK_DAYS);
   const result: Record<string, string[]> = {};
   for (const symbol of WATCHLIST) {
@@ -184,8 +184,17 @@ export type ComputedDay = {
   records: TradeRecord[];
 };
 
-/** その日を足から作り直した結果(保存はしない)。画面(T10)もこれを使う(ADR-0009) */
-export function computeDay(deps: StoredDeps, run: DayRun, closeOut: boolean, now: Date): ComputedDay {
+/**
+ * その日を足から作り直した結果(保存はしない)。画面(T10)もこれを使う(ADR-0009)。
+ * mode が "backtest"(過去データで試す、ADR-0010)の時は、自動売買を毎日 ON とみなし、「あとから処理」の印は付けない
+ */
+export function computeDay(
+  deps: StoredDeps,
+  run: DayRun,
+  closeOut: boolean,
+  now: Date,
+  mode: "live" | "backtest" = "live",
+): ComputedDay {
   const session = sessionOn(run.date);
   if (!session) throw new Error(`${run.date} は取引日ではありません`);
   const bars = dayBars(deps, session);
@@ -203,18 +212,19 @@ export function computeDay(deps: StoredDeps, run: DayRun, closeOut: boolean, now
     pastVolumes: (symbol, start) => sameTimeVolumes(past.get(symbol) ?? [], start),
     // その足を受け取った時刻の ON / OFF で決める。受け取った時刻がない足(過去データの取得で入れた足)は、
     // 今作り直している時刻で決める(ADR-0009、T9 のレビュー 2)
-    buyingAllowed: (symbol, start) => autoTradingAt(findBar(symbol, start)?.receivedAt ?? now),
+    buyingAllowed: (symbol, start) => mode === "backtest" || autoTradingAt(findBar(symbol, start)?.receivedAt ?? now),
     closeOut,
   });
 
   // 受け取った時刻がない足は、自動売買が時間どおりに受け取ったものではないので「あとから処理」とする(T9 のレビュー 5)
   const isLate = (symbol: string, start: Date): boolean => {
+    if (mode === "backtest") return false;
     const r = findBar(symbol, start)?.receivedAt;
     return r === undefined || r.getTime() - start.getTime() > LATE_AFTER_MS;
   };
 
   // 届いた最後の足で締めて売った時(最後の足が届かなかった時)、締めたのが取引終了から30分より大きく遅れたら、あとから処理した印を付ける
-  const lateCloseOut = closeOut && now.getTime() - session.close.getTime() > CLOSE_WAIT_MS + 10 * MINUTE;
+  const lateCloseOut = mode === "live" && closeOut && now.getTime() - session.close.getTime() > CLOSE_WAIT_MS + 10 * MINUTE;
   const lastBarStart = session.close.getTime() - BAR_MS;
 
   const records: TradeRecord[] = result.buys.map((b) => {

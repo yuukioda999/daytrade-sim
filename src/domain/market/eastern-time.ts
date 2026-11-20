@@ -31,8 +31,27 @@ function getPartsFormat(): Intl.DateTimeFormat {
   return partsFormat;
 }
 
-/** その瞬間の、UTC からのずれ(分)。冬時間は -300、夏時間は -240。 */
+const HOUR_MS = 3_600_000;
+/** ずれの覚え書き(UTC の1時間ごと)。上限を超えたら捨てて作り直す */
+const offsetCache = new Map<number, number>();
+const OFFSET_CACHE_LIMIT = 100_000;
+
+/**
+ * その瞬間の、UTC からのずれ(分)。冬時間は -300、夏時間は -240。
+ * 米国の夏時間の切り替えは現地の午前2時(UTC のちょうどの時刻)に起きるので、UTC の1時間の中ではずれは変わらない。
+ * そのため UTC の1時間ごとに覚えておく(過去データで試す時に何万回も呼ぶため。T11 で測って 6秒のうち 4秒がここだった)
+ */
 export function easternOffsetMinutes(instant: Date): number {
+  const hourKey = Math.floor(instant.getTime() / HOUR_MS);
+  const cached = offsetCache.get(hourKey);
+  if (cached !== undefined) return cached;
+  const minutes = readOffsetMinutes(new Date(hourKey * HOUR_MS));
+  if (offsetCache.size >= OFFSET_CACHE_LIMIT) offsetCache.clear();
+  offsetCache.set(hourKey, minutes);
+  return minutes;
+}
+
+function readOffsetMinutes(instant: Date): number {
   const name = getOffsetFormat()
     .formatToParts(instant)
     .find((p) => p.type === "timeZoneName")?.value;
@@ -66,6 +85,21 @@ function weekdayIndex(name: string | undefined): number {
 }
 
 export function toEastern(instant: Date): EasternParts {
+  // ずれを当てた時刻を UTC として読む(Intl で毎回分解するより速い。ずれは Intl で読んだ値)
+  const local = new Date(instant.getTime() + easternOffsetMinutes(instant) * 60_000);
+  if (Number.isNaN(local.getTime())) throw new Error("時刻が正しくありません");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    date: `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`,
+    hour: local.getUTCHours(),
+    minute: local.getUTCMinutes(),
+    second: local.getUTCSeconds(),
+    weekday: local.getUTCDay(),
+  };
+}
+
+/** Intl で分解した米国東部時間(toEastern の速い計算と同じ結果になることを、テストで確かめるため) */
+export function toEasternByIntl(instant: Date): EasternParts {
   const p = Object.fromEntries(getPartsFormat().formatToParts(instant).map((x) => [x.type, x.value]));
   return {
     date: `${p.year}-${p.month}-${p.day}`,

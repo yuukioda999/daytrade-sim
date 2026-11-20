@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState, useSyncExternalStore } from "react";
 import type { DashboardView as View, PositionView, SymbolView, TradeView } from "@/application/dashboard-service";
 import { cn } from "@/components/ui/cn";
 import { formatDateJa, formatEasternDateTime, formatJpy } from "@/components/settings/format";
@@ -34,52 +34,190 @@ export function SignedText({ value, className }: { value: Signed; className?: st
   );
 }
 
-export function DashboardView() {
-  const state = useDashboard();
-  const [selected, setSelected] = useState<string | null>(null);
+/** URL の ?backtest=YYYY-MM-DD(成績の画面の日付のリンクから来る。AC-007-18) */
+function backtestDateOf(search: string): string | null {
+  const d = new URLSearchParams(search).get("backtest");
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+}
 
-  // 見出しは読み込みの前から出す(画面の名前は読み上げで分かるようにし、見た目はワイヤーフレームどおり出さない)
-  const title = <h1 className="sr-only">ダッシュボード</h1>;
+const subscribeNothing = () => () => {};
+
+export function DashboardView() {
+  // サーバーでの描画では URL の検索の部分が分からないので null。ブラウザで読んでから中身を出す
+  const search = useSyncExternalStore(
+    subscribeNothing,
+    () => window.location.search,
+    () => null,
+  );
+  // 切り替えたあとの日(undefined なら URL のとおり)
+  const [chosen, setChosen] = useState<string | null | undefined>(undefined);
+  const backtestDate = chosen !== undefined ? chosen : search === null ? null : backtestDateOf(search);
+  const setBacktestDate = (date: string | null) => {
+    setChosen(date);
+    // 読み込み直しても同じ日を出せるように、URL に残す
+    const url = new URL(window.location.href);
+    if (date === null) url.searchParams.delete("backtest");
+    else url.searchParams.set("backtest", date);
+    window.history.replaceState(null, "", url);
+  };
+  return (
+    <>
+      {/* 見出しは読み込みの前から出す(画面の名前は読み上げで分かるようにし、見た目はワイヤーフレームどおり出さない) */}
+      <h1 className="sr-only">ダッシュボード</h1>
+      {search !== null && <DashboardBody backtestDate={backtestDate} onBacktestDate={setBacktestDate} />}
+    </>
+  );
+}
+
+function DashboardBody({ backtestDate, onBacktestDate }: { backtestDate: string | null; onBacktestDate: (d: string | null) => void }) {
+  const state = useDashboard(backtestDate);
+  const [selected, setSelected] = useState<string | null>(null);
+  // 読み込みの前は、試した日があるか分からない(null)
+  const knownDates = state.lastView?.backtestDates ?? null;
+
+  const toggle = (
+    <DataModeToggle
+      backtestDate={backtestDate}
+      dates={knownDates}
+      onLive={() => onBacktestDate(null)}
+      onBacktest={(d) => onBacktestDate(d)}
+    />
+  );
   if (state.status === "loading") {
     return (
-      <>
-        {title}
+      <div className="flex flex-col gap-4">
+        {toggle}
         <p className="text-fg-sub">読み込んでいます</p>
-      </>
+      </div>
     );
   }
   if (state.status === "error") {
     return (
-      <>
-        {title}
+      <div className="flex flex-col gap-4">
+        {toggle}
         <p role="alert" className="text-down">
-          ダッシュボードを読み込めませんでした。画面を読み込み直してください
+          {backtestDate !== null && state.notFound
+            ? "その日は過去データで試していません。設定の画面で過去データで試してから、日を選んでください"
+            : "ダッシュボードを読み込めませんでした。画面を読み込み直してください"}
         </p>
-      </>
+      </div>
     );
   }
   const view = state.view;
   const symbol = view.symbols.find((s) => s.symbol === selected) ?? defaultSymbol(view);
+  const backtest = view.mode === "backtest";
 
   return (
     <div className="flex flex-col gap-4">
-      {title}
+      {toggle}
       {state.refreshFailed && <RefreshFailed />}
-      <DayNotice view={view} />
+      {backtest ? <BacktestBanner view={view} onSelect={(d) => onBacktestDate(d)} /> : <DayNotice view={view} />}
       {view.money?.limitReached && <LimitWarning view={view} />}
       <div className="flex flex-wrap items-start gap-4">
         <Watchlist view={view} selected={symbol.symbol} onSelect={setSelected} />
         <section aria-label="選んだ銘柄" className="flex min-w-0 flex-[999_1_520px] flex-col gap-4">
           <ChartCard view={symbol} />
-          <BuyCard trade={latestTrade(view.trades)} />
+          <BuyCard trade={latestTrade(view.trades)} showTradesLink={!backtest} />
         </section>
-        <section aria-label="今日のお金の状況" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
-          <WorkerCard view={view} />
+        <section aria-label={`${dayLabelOf(view)}のお金の状況`} className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
+          {!backtest && <WorkerCard view={view} />}
           <MoneyCard view={view} />
           <PositionsCard positions={view.positions} />
         </section>
       </div>
     </div>
+  );
+}
+
+/** 「今日の市場」と「過去データで試す」の切り替え(ワイヤーフレームのヘッダーの切り替え。AC-007-18) */
+function DataModeToggle({
+  backtestDate,
+  dates,
+  onLive,
+  onBacktest,
+}: {
+  backtestDate: string | null;
+  dates: string[] | null;
+  onLive: () => void;
+  onBacktest: (date: string) => void;
+}) {
+  const [noData, setNoData] = useState(false);
+  const button = "min-h-11 px-3 text-[13px]";
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <div role="group" aria-label="使うデータ" className="flex overflow-hidden rounded-lg border border-border">
+        <button
+          type="button"
+          aria-pressed={backtestDate === null}
+          onClick={() => {
+            setNoData(false);
+            onLive();
+          }}
+          className={cn(button, backtestDate === null ? "bg-muted font-semibold text-fg" : "text-fg-muted hover:text-fg")}
+        >
+          今日の市場
+        </button>
+        <button
+          type="button"
+          aria-pressed={backtestDate !== null}
+          disabled={dates === null && backtestDate === null}
+          onClick={() => {
+            const last = dates?.at(-1);
+            if (last) onBacktest(backtestDate ?? last);
+            else setNoData(true);
+          }}
+          className={cn(
+            button,
+            "disabled:opacity-50",
+            backtestDate !== null ? "bg-muted font-semibold text-fg" : "text-fg-muted hover:text-fg",
+          )}
+        >
+          過去データで試す
+        </button>
+      </div>
+      <p role="status" className="text-[13px] text-fg-sub">
+        {noData && (
+          <>
+            まだ過去データで試していません。
+            <Link href="/settings#sec-backtest" className="text-accent-soft underline">
+              設定の画面で試せます
+            </Link>
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/** 過去データで試した日を見ている時の表示。日付を大きく出し、今日の市場と取り違えないようにする(AC-007-18) */
+function BacktestBanner({ view, onSelect }: { view: View; onSelect: (date: string) => void }) {
+  const id = useId();
+  if (view.date === null) return null;
+  return (
+    <section aria-labelledby={`${id}-title`} className="rounded-xl border-2 border-warn bg-warn/15 px-5 py-4" data-testid="backtest-banner">
+      <p className="text-[13px] font-semibold text-fg">過去データで試した結果を見ています。今日の市場ではありません</p>
+      <h2 id={`${id}-title`} className="mt-1 text-3xl font-bold text-fg">
+        {formatDateJa(view.date, { withYear: true })}
+      </h2>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label htmlFor={`${id}-date`} className="text-[13px] text-fg">
+          試した日を選ぶ
+        </label>
+        <select
+          id={`${id}-date`}
+          value={view.date}
+          onChange={(e) => onSelect(e.target.value)}
+          className="min-h-11 rounded-lg border border-input bg-surface-2 px-3 text-fg"
+        >
+          {[...view.backtestDates].reverse().map((d) => (
+            <option key={d} value={d}>
+              {formatDateJa(d, { withYear: true })}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="mt-2 text-xs text-fg">保存している過去の値動きで、毎日の自動売買と同じルールを試した結果です。実際の注文は出していません。</p>
+    </section>
   );
 }
 
@@ -260,7 +398,7 @@ function ChartCard({ view }: { view: SymbolView }) {
   );
 }
 
-function BuyCard({ trade }: { trade: TradeView | null }) {
+function BuyCard({ trade, showTradesLink }: { trade: TradeView | null; showTradesLink: boolean }) {
   if (!trade) return null;
   return (
     <section aria-labelledby="buy-card-title" className={cn(card, "border-up")}>
@@ -284,9 +422,12 @@ function BuyCard({ trade }: { trade: TradeView | null }) {
         <p className="text-xs text-fg-sub">
           実際の注文は出していません。買いサインは条件がそろったことを示す表示で、買うことを勧めるものではありません。
         </p>
-        <Link href="/trades" className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 font-bold text-accent-fg">
-          自動売買の記録を見る
-        </Link>
+        {/* 自動売買の記録の画面は毎日の記録だけを出すので、過去データで試した日を見ている時は出さない */}
+        {showTradesLink && (
+          <Link href="/trades" className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 font-bold text-accent-fg">
+            自動売買の記録を見る
+          </Link>
+        )}
       </div>
     </section>
   );
@@ -342,9 +483,11 @@ function MoneyCard({ view }: { view: View }) {
         <h2 id="money-title" className={subhead}>
           {day}のお金の状況
         </h2>
-        <Link href="/trades" className="inline-flex min-h-11 items-center text-xs text-accent-soft">
-          詳細
-        </Link>
+        {view.mode === "live" && (
+          <Link href="/trades" className="inline-flex min-h-11 items-center text-xs text-accent-soft">
+            詳細
+          </Link>
+        )}
       </div>
       <p className="text-xs text-fg-muted">
         残高。元手<span className="text-[11px]">(元本)</span>は {formatJpy(m.principalJpy)}
@@ -372,7 +515,7 @@ function MoneyCard({ view }: { view: View }) {
       </div>
       <div
         role="img"
-        aria-label={`今日の損失の上限の ${usedPercent}% を使用`}
+        aria-label={`${day}の損失の上限の ${usedPercent}% を使用`}
         className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-muted"
       >
         <div className={cn("h-full", m.limitReached ? "bg-down" : "bg-warn")} style={{ width: `${usedPercent}%` }} />

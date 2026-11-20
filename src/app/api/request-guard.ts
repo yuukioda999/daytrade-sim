@@ -91,7 +91,7 @@ export async function withSafeErrors(handler: () => Promise<Response> | Response
     if (e instanceof CalendarOutOfRangeError) {
       return jsonResponse({ error: "休場日の表が古いため、次の取引日を決められません。休場日の表の更新が必要です" }, 503);
     }
-    console.error(`設定の API でエラーが起きました(${e instanceof Error ? e.name : typeof e})`);
+    console.error(`API でエラーが起きました(${e instanceof Error ? e.name : typeof e})`);
     return jsonResponse({ error: "処理できませんでした" }, 500);
   }
 }

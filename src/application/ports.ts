@@ -97,11 +97,36 @@ export interface TradingRepository {
   putWorkerStatus(status: WorkerStatus): void;
 }
 
+/** 過去データで試した時の条件(ADR-0010) */
+export type BacktestRun = { ranAt: Date; principalJpy: number; fxRateX100: number };
+
+/** 過去データで試した1日分。売買がなかった日も作る(SPEC-004) */
+export type BacktestDay = {
+  date: string;
+  /** その日より前の損益の合計(円) */
+  startingRealizedJpy: number;
+  baselineDates: Record<string, string[]>;
+  /** その日の売り終わった分の損益の合計(円) */
+  pnlJpy: number;
+  limitReached: boolean;
+};
+
+/** 過去データで試した結果の保存先。毎日ためた記録とは分ける(SPEC-004 AC-004-04、ADR-0010) */
+export interface BacktestRepository {
+  /** 前の結果を消して、まとめて置き換える */
+  replaceAll(run: BacktestRun, days: readonly BacktestDay[], trades: readonly TradeRecord[]): void;
+  getRun(): BacktestRun | null;
+  /** 古い順 */
+  listDays(): BacktestDay[];
+  listTrades(date: string): TradeRecord[];
+}
+
 export type Repositories = {
   settings: SettingsRepository;
   credentials: CredentialsRepository;
   bars: BarRepository;
   trading: TradingRepository;
+  backtest: BacktestRepository;
 };
 
 /** 市場データの取得元のエラーの種類。画面に出す言葉は application で決める */

@@ -62,6 +62,10 @@ export type TradeView = {
 
 export type DashboardView = {
   now: string;
+  /** 今日の市場か、過去データで試した結果か(AC-007-18、ADR-0010) */
+  mode: "live" | "backtest";
+  /** 過去データで試した日(古い順)。試していなければ空 */
+  backtestDates: string[];
   /** 表示している取引日(米国東部時間)。まだ記録がなければ null */
   date: string | null;
   /** 表示している日が今日か */
@@ -143,8 +147,53 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
   const autoTradingEnabled = repos.settings.getAutoTradingEnabled() ?? true;
 
   const run = viewDate(repos, today);
-  const empty: DashboardView = {
+  const empty = emptyView(now, worker, autoTradingEnabled, backtestDatesOf(repos));
+  if (!run) return empty;
+
+  // 売買の記録と、今日の損益、損失の上限は、ワーカーが保存した記録から作る(画面を開いた時刻で計算し直すと、
+  // 「あとから処理」の印などが保存した記録と食い違うため。T10 のレビュー 2)。
+  // 計算し直すのは、足から出す値(チャート、3つの条件)と、持っている株の今の損益と売りの基準だけ
+  const stored = repos.trading.listTrades(run.date);
+  return { ...empty, ...dayParts(deps, run, stored, now, "live"), isToday: run.date === today };
+}
+
+/**
+ * 過去データで試した1日分を、ダッシュボードと同じ形で出す(AC-007-18、ADR-0010)。試していない日なら null。
+ * 記録は試した結果の表から読み、毎日ためた記録とは混ぜない(SPEC-004 AC-004-04)
+ */
+export function getBacktestDashboardView(deps: StoredDeps, now: Date, date: string): DashboardView | null {
+  const { repos } = deps;
+  const runInfo = repos.backtest.getRun();
+  const day = repos.backtest.listDays().find((d) => d.date === date);
+  if (!runInfo || !day) return null;
+  const run: DayRun = {
+    date,
+    principalJpy: runInfo.principalJpy,
+    fxRateX100: runInfo.fxRateX100,
+    startingRealizedJpy: day.startingRealizedJpy,
+    baselineDates: day.baselineDates,
+    closed: true,
+    startedAt: runInfo.ranAt,
+  };
+  const status = repos.trading.getWorkerStatus();
+  const base = emptyView(
+    now,
+    { state: status?.state ?? "never-started", message: "", stopped: false, heartbeatAt: null, lastBarReceivedAt: null },
+    true,
+    backtestDatesOf(repos),
+  );
+  return { ...base, ...dayParts(deps, run, repos.backtest.listTrades(date), now, "backtest"), mode: "backtest", isToday: false };
+}
+
+function backtestDatesOf(repos: Repositories): string[] {
+  return repos.backtest.listDays().map((d) => d.date);
+}
+
+function emptyView(now: Date, worker: DashboardView["worker"], autoTradingEnabled: boolean, backtestDates: string[]): DashboardView {
+  return {
     now: iso(now),
+    mode: "live",
+    backtestDates,
     date: null,
     isToday: false,
     worker,
@@ -169,13 +218,18 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
       status: "watching",
     })),
   };
-  if (!run) return empty;
+}
 
-  // 売買の記録と、今日の損益、損失の上限は、ワーカーが保存した記録から作る(画面を開いた時刻で計算し直すと、
-  // 「あとから処理」の印などが保存した記録と食い違うため。T10 のレビュー 2)。
-  // 計算し直すのは、足から出す値(チャート、3つの条件)と、持っている株の今の損益と売りの基準だけ
-  const stored = repos.trading.listTrades(run.date);
-  const day = computeDay(deps, run, run.closed, now);
+/** その日の値(チャート、3つの条件、持っている株、記録、お金)。記録は保存したものを使う */
+function dayParts(
+  deps: StoredDeps,
+  run: DayRun,
+  stored: readonly TradeRecord[],
+  now: Date,
+  mode: "live" | "backtest",
+): Pick<DashboardView, "date" | "money" | "positions" | "trades" | "symbols"> {
+  const { repos } = deps;
+  const day = computeDay(deps, run, run.closed, now, mode);
   const fxRate = fxRateFromX100(run.fxRateX100);
   const lastPriceOf = (symbol: string) => {
     const b = day.bars[symbol];
@@ -244,11 +298,7 @@ export function getDashboardView(deps: StoredDeps, now: Date): DashboardView {
   const todayRealized = stored.reduce((a, r) => a + (r.exit?.pnlJpy ?? 0), 0);
   const { dailyLossLimitJpy } = fixedLimitsJpy(run.principalJpy);
   return {
-    now: iso(now),
     date: run.date,
-    isToday: run.date === today,
-    worker,
-    autoTradingEnabled,
     money: {
       principalJpy: run.principalJpy,
       balanceJpy: run.principalJpy + run.startingRealizedJpy + todayRealized,

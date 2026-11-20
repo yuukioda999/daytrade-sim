@@ -197,3 +197,47 @@ describe("SQLite のファイル", () => {
     }
   });
 });
+
+describe.each(IMPLEMENTATIONS)("%s の過去データで試した結果の保存先(ADR-0010)", (_, create) => {
+  const record = (date: string, symbol: string, pnlJpy: number | null) => ({
+    date,
+    symbol,
+    signalBarStart: new Date(`${date}T14:45:00Z`),
+    entryTime: new Date(`${date}T14:50:00Z`),
+    entryPrice: 78.45,
+    shares: 0.4248,
+    stopPrice: 77.1,
+    exit: pnlJpy === null ? null : { time: new Date(`${date}T14:55:00Z`), price: 77.1, reason: "stop" as const, pnlJpy },
+    late: false,
+  });
+
+  it("AC-004-04: まとめて置き換え、条件、日(取引量の基準の日と上限の印を含む)、記録を読み戻せる。毎日の記録には入らない", () => {
+    const repos = create();
+    expect(repos.backtest.getRun()).toBeNull();
+    const ranAt = new Date("2026-11-20T15:00:00Z");
+    repos.backtest.replaceAll(
+      { ranAt, principalJpy: 10_000, fxRateX100: 15_000 },
+      [
+        { date: "2026-10-02", startingRealizedJpy: -86.022, baselineDates: { SOXL: ["2026-10-01"] }, pnlJpy: -1_200, limitReached: true },
+        { date: "2026-10-01", startingRealizedJpy: 0, baselineDates: {}, pnlJpy: -86.022, limitReached: false },
+      ],
+      [record("2026-10-01", "SOXL", -86.022), record("2026-10-02", "TQQQ", null)],
+    );
+    expect(repos.backtest.getRun()).toEqual({ ranAt, principalJpy: 10_000, fxRateX100: 15_000 });
+    expect(repos.backtest.listDays()).toEqual([
+      { date: "2026-10-01", startingRealizedJpy: 0, baselineDates: {}, pnlJpy: -86.022, limitReached: false },
+      { date: "2026-10-02", startingRealizedJpy: -86.022, baselineDates: { SOXL: ["2026-10-01"] }, pnlJpy: -1_200, limitReached: true },
+    ]);
+    expect(repos.backtest.listTrades("2026-10-01")).toEqual([record("2026-10-01", "SOXL", -86.022)]);
+    expect(repos.backtest.listTrades("2026-10-02")).toEqual([record("2026-10-02", "TQQQ", null)]);
+    expect(repos.trading.listTrades("2026-10-01")).toEqual([]);
+
+    // もう一度保存すると、前の日と記録は残らない
+    repos.backtest.replaceAll({ ranAt, principalJpy: 20_000, fxRateX100: 10_000 }, [
+      { date: "2026-10-05", startingRealizedJpy: 0, baselineDates: {}, pnlJpy: 0, limitReached: false },
+    ], []);
+    expect(repos.backtest.listDays().map((d) => d.date)).toEqual(["2026-10-05"]);
+    expect(repos.backtest.listTrades("2026-10-01")).toEqual([]);
+    expect(repos.backtest.getRun()?.principalJpy).toBe(20_000);
+  });
+});

@@ -1,4 +1,7 @@
 import type {
+  BacktestDay,
+  BacktestRepository,
+  BacktestRun,
   BarRepository,
   CredentialsRepository,
   DayRun,
@@ -137,11 +140,36 @@ export class MemoryTradingRepository implements TradingRepository {
   }
 }
 
+export class MemoryBacktestRepository implements BacktestRepository {
+  private run: BacktestRun | null = null;
+  private days: BacktestDay[] = [];
+  private trades: TradeRecord[] = [];
+
+  replaceAll(run: BacktestRun, days: readonly BacktestDay[], trades: readonly TradeRecord[]): void {
+    this.run = { ...run };
+    this.days = [...days].sort((a, b) => a.date.localeCompare(b.date)).map((d) => ({ ...d }));
+    this.trades = trades.map((t) => ({ ...t, late: false }));
+  }
+  getRun(): BacktestRun | null {
+    return this.run ? { ...this.run } : null;
+  }
+  listDays(): BacktestDay[] {
+    return this.days.map((d) => ({ ...d }));
+  }
+  listTrades(date: string): TradeRecord[] {
+    return this.trades
+      .filter((t) => t.date === date)
+      .sort((a, b) => a.entryTime.getTime() - b.entryTime.getTime())
+      .map((t) => ({ ...t }));
+  }
+}
+
 export function memoryRepositories(now: () => Date = () => new Date()): Repositories {
   return {
     settings: new MemorySettingsRepository(now),
     credentials: new MemoryCredentialsRepository(),
     bars: new MemoryBarRepository(),
     trading: new MemoryTradingRepository(),
+    backtest: new MemoryBacktestRepository(),
   };
 }

@@ -76,6 +76,9 @@ const TINTED_PAIRS: ReadonlyArray<[fg: string, tint: string, alpha: number, base
   ["accent-soft", "accent", 0.15, "surface"],
   ["fg", "down", 0.15, "bg"],
   ["fg", "warn", 0.15, "bg"],
+  // 成績の画面(T11): 上部の注意書き、日ごとの表の印
+  ["fg", "accent", 0.15, "bg"],
+  ["fg", "down", 0.15, "surface"],
 ];
 
 describe("テーマの色", () => {
