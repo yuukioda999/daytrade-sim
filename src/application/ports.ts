@@ -12,6 +12,8 @@ export interface SettingsRepository {
   listMoneySettings(): MoneySettings[];
   /** 同じ使い始める日の設定があれば置き換える */
   putMoneySettings(settings: MoneySettings): void;
+  /** 自動売買の ON / OFF を変えた時刻の履歴(古い順。ADR-0009) */
+  listAutoTradingChanges(): { at: Date; enabled: boolean }[];
 }
 
 /**
@@ -24,8 +26,8 @@ export interface CredentialsRepository {
   delete(): void;
 }
 
-/** 銘柄つきの5分足 */
-export type SymbolBar = Bar & { symbol: string };
+/** 銘柄つきの5分足。receivedAt は自動売買のプロセスが受け取った時刻(過去データの取得では undefined) */
+export type SymbolBar = Bar & { symbol: string; receivedAt?: Date };
 
 /** 5分足の保存先(ADR-0008) */
 export interface BarRepository {
@@ -35,14 +37,69 @@ export interface BarRepository {
   markFetched(symbol: string, dates: readonly string[]): void;
   /** from から to(両端を含む)のうち、取り終えた日 */
   fetchedDates(symbol: string, from: string, to: string): string[];
+  /** start から end(end を含まない)に始まる足(古い順) */
+  barsBetween(symbol: string, start: Date, end: Date): SymbolBar[];
+  /** date より前の、取り終えた日のうち新しい方から limit 日(古い順で返す) */
+  fetchedDatesBefore(symbol: string, date: string, limit: number): string[];
   /** 銘柄ごとの、保存している足の本数と、取り終えた日の数、最初と最後 */
   summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[];
+}
+
+/** 自動売買のプロセスが動いた取引日(SPEC-004 の「記録のある日」) */
+export type DayRun = {
+  date: string;
+  principalJpy: number;
+  fxRateX100: number;
+  /** その日より前の損益の合計(円) */
+  startingRealizedJpy: number;
+  /** その日を締めたか */
+  closed: boolean;
+  startedAt: Date;
+};
+
+/** 練習売買の記録。売っていない株は exit が null */
+export type TradeRecord = {
+  date: string;
+  symbol: string;
+  signalBarStart: Date;
+  entryTime: Date;
+  entryPrice: number;
+  shares: number;
+  stopPrice: number;
+  exit: { time: Date; price: number; reason: "stop" | "trailing" | "close"; pnlJpy: number } | null;
+  /** あとから処理した記録(SPEC-003 定義 11) */
+  late: boolean;
+};
+
+export type WorkerState = "running" | "idle" | "no-credentials" | "data-error" | "calendar-outdated";
+
+export type WorkerStatus = {
+  heartbeatAt: Date;
+  lastBarReceivedAt: Date | null;
+  state: WorkerState;
+  /** 画面に出す言葉 */
+  message: string;
+};
+
+/** 練習売買の記録と、自動売買のプロセスの様子の保存先(ADR-0009) */
+export interface TradingRepository {
+  getDayRun(date: string): DayRun | null;
+  putDayRun(run: DayRun): void;
+  listDayRuns(): DayRun[];
+  /** その日の記録を、まとめて置き換える */
+  replaceDayTrades(date: string, records: readonly TradeRecord[]): void;
+  listTrades(date: string): TradeRecord[];
+  /** date より前の日の、売り終わった記録の損益の合計(円) */
+  realizedBefore(date: string): number;
+  getWorkerStatus(): WorkerStatus | null;
+  putWorkerStatus(status: WorkerStatus): void;
 }
 
 export type Repositories = {
   settings: SettingsRepository;
   credentials: CredentialsRepository;
   bars: BarRepository;
+  trading: TradingRepository;
 };
 
 /** 市場データの取得元のエラーの種類。画面に出す言葉は application で決める */

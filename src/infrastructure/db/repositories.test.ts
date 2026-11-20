@@ -5,9 +5,11 @@ import { openDatabase } from "./database";
 import { sqliteRepositories } from "./sqlite-repositories";
 
 /** SQLite とメモリの実装が、同じふるまいをすることを確かめる(ADR-0003 の差し替え) */
+let clock = new Date("2026-11-20T15:00:00Z");
+const now = () => clock;
 const IMPLEMENTATIONS: [string, () => Repositories][] = [
-  ["SQLite", () => sqliteRepositories(openDatabase(":memory:"))],
-  ["メモリ", () => memoryRepositories()],
+  ["SQLite", () => sqliteRepositories(openDatabase(":memory:"), now)],
+  ["メモリ", () => memoryRepositories(now)],
 ];
 
 const CREDS = { keyId: "PKTESTKEY0000000ABCD", secret: "TestSecret0000000000000000000000000000000" };
@@ -70,6 +72,87 @@ describe.each(IMPLEMENTATIONS)("%s の保存先", (_, create) => {
       { symbol: "SOXL", barCount: 0, dayCount: 3, firstDate: "2026-11-02", lastDate: "2026-11-04" },
       { symbol: "TQQQ", barCount: 0, dayCount: 1, firstDate: "2026-11-02", lastDate: "2026-11-02" },
     ]);
+  });
+
+  it("ADR-0009: 自動売買の ON / OFF を変えた時刻の履歴を、古い順に返す", () => {
+    const { settings } = create();
+    clock = new Date("2026-11-20T15:00:00Z");
+    settings.setAutoTradingEnabled(false);
+    clock = new Date("2026-11-20T16:00:00Z");
+    settings.setAutoTradingEnabled(true);
+    expect(settings.listAutoTradingChanges()).toEqual([
+      { at: new Date("2026-11-20T15:00:00Z"), enabled: false },
+      { at: new Date("2026-11-20T16:00:00Z"), enabled: true },
+    ]);
+  });
+
+  it("足を期間で読み出す。受け取った時刻も残る。取り終えた日を、ある日より前から新しい順に数えて返す", () => {
+    const { bars } = create();
+    const b = (iso: string, receivedAt?: Date) => ({
+      symbol: "SOXL",
+      start: new Date(iso),
+      open: 1,
+      high: 2,
+      low: 0.5,
+      close: 1.5,
+      volume: 10,
+      receivedAt,
+    });
+    bars.saveBars([
+      b("2026-11-20T14:35:00Z", new Date("2026-11-20T15:00:00Z")),
+      b("2026-11-20T14:30:00Z"),
+      b("2026-11-20T21:00:00Z"),
+    ]);
+    const got = bars.barsBetween("SOXL", new Date("2026-11-20T14:30:00Z"), new Date("2026-11-20T21:00:00Z"));
+    expect(got.map((x) => [x.start.toISOString(), x.receivedAt?.toISOString()])).toEqual([
+      ["2026-11-20T14:30:00.000Z", undefined],
+      ["2026-11-20T14:35:00.000Z", "2026-11-20T15:00:00.000Z"],
+    ]);
+    bars.markFetched("SOXL", ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"]);
+    expect(bars.fetchedDatesBefore("SOXL", "2026-11-20", 3)).toEqual(["2026-11-17", "2026-11-18", "2026-11-19"]);
+  });
+
+  it("その日の記録を置き換え、前の日までの損益の合計を返す。動いた日と様子を保存する", () => {
+    const { trading } = create();
+    const record = (date: string, pnl: number | null) => ({
+      date,
+      symbol: "SOXL",
+      signalBarStart: new Date(`${date}T14:45:00Z`),
+      entryTime: new Date(`${date}T14:50:00Z`),
+      entryPrice: 78.45,
+      shares: 0.4248,
+      stopPrice: 77.1,
+      exit: pnl === null ? null : { time: new Date(`${date}T14:55:00Z`), price: 77.1, reason: "stop" as const, pnlJpy: pnl },
+      late: false,
+    });
+    trading.replaceDayTrades("2026-11-18", [record("2026-11-18", -86.022)]);
+    trading.replaceDayTrades("2026-11-19", [record("2026-11-19", 100), record("2026-11-19", null)]);
+    trading.replaceDayTrades("2026-11-19", [record("2026-11-19", 50)]);
+    expect(trading.listTrades("2026-11-19")).toEqual([record("2026-11-19", 50)]);
+    expect(trading.realizedBefore("2026-11-20")).toBeCloseTo(-36.022, 9);
+    expect(trading.realizedBefore("2026-11-19")).toBeCloseTo(-86.022, 9);
+
+    const run = {
+      date: "2026-11-20",
+      principalJpy: 10_000,
+      fxRateX100: 15_000,
+      startingRealizedJpy: -36.022,
+      closed: false,
+      startedAt: new Date("2026-11-20T14:30:00Z"),
+    };
+    trading.putDayRun(run);
+    trading.putDayRun({ ...run, closed: true });
+    expect(trading.getDayRun("2026-11-20")).toEqual({ ...run, closed: true });
+    expect(trading.listDayRuns()).toHaveLength(1);
+
+    const status = {
+      heartbeatAt: new Date("2026-11-20T15:00:00Z"),
+      lastBarReceivedAt: null,
+      state: "running" as const,
+      message: "動いています",
+    };
+    trading.putWorkerStatus(status);
+    expect(trading.getWorkerStatus()).toEqual(status);
   });
 
   it("接続用キーを保存、上書き、削除できる", () => {
