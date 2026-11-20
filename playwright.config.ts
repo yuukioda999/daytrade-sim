@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3100;
+const E2E_DB_PATH = ".e2e/daytrade-e2e.db";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -8,7 +9,8 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: `http://localhost:${PORT}`,
+    // サーバーはこのパソコンからだけ開ける形(127.0.0.1)で待ち受ける(package.json の dev、start)
+    baseURL: `http://127.0.0.1:${PORT}`,
     // 利用者は日本時間の Mac で使うので、ブラウザのタイムゾーンを日本に合わせる
     timezoneId: "Asia/Tokyo",
     locale: "ja-JP",
@@ -34,10 +36,14 @@ export default defineConfig({
   webServer: {
     // CI では本番と同じビルドで確かめる。手元では開発サーバーを使う
     command: process.env.CI
-      ? `npm run build && npm run start -- --port ${PORT}`
-      : `npm run dev -- --port ${PORT}`,
-    port: PORT,
-    reuseExistingServer: !process.env.CI,
+      ? `rm -rf .e2e && npm run build && npm run start -- --port ${PORT}`
+      : `rm -rf .e2e && npm run dev -- --port ${PORT}`,
+    url: `http://127.0.0.1:${PORT}`,
+    // 立ち上げ済みのサーバーは使い回さない。使い回すと、そのサーバーが本番の data/ を使っていた時に、
+    // 設定のテストが本物のキーを消してしまう(T7 のレビュー)
+    reuseExistingServer: false,
+    // 画面のテストは、本番の data/ とは別の DB ファイルを使う。サーバーを立ち上げる時に消して、空の DB から始める
+    env: { DAYTRADE_DB_PATH: E2E_DB_PATH },
     timeout: 180_000,
   },
 });

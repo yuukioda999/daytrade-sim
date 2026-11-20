@@ -44,6 +44,22 @@ export function closedReason(date: string): ClosedReason | null {
   return null;
 }
 
+/** date より後の、最初の取引日(米国東部時間の暦日)。休みの日の表にない年に入るとエラー。 */
+export function nextTradingDate(date: string): string {
+  let d = addDays(date, 1);
+  // 休みは長くても数日なので、14日先までに必ず見つかる
+  for (let i = 0; i < 14; i++) {
+    if (closedReason(d) === null) return d;
+    d = addDays(d, 1);
+  }
+  throw new Error(`${date} の後14日に取引日がありません`);
+}
+
+function addDays(date: string, days: number): string {
+  const t = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
 /** 米国東部時間の暦日の取引時間。休みの日は null。 */
 export function sessionOn(date: string): MarketSession | null {
   if (closedReason(date) !== null) return null;

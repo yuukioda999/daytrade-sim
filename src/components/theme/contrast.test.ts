@@ -51,12 +51,17 @@ const NON_TEXT_PAIRS: ReadonlyArray<[mark: string, bg: string]> = [
   ["accent", "card"],
   ["warn", "card"],
   ["fg", "card"],
+  // 設定の画面の入力欄の枠(T7)
+  ["input", "surface-2"],
 ];
 
 /** 半透明の背景(背景の色 / 不透明度)の上の文字。ヘッダーの市場の状態の表示で使う。 */
 const TINTED_PAIRS: ReadonlyArray<[fg: string, tint: string, alpha: number, base: string]> = [
   ["up", "up", 0.15, "surface-2"],
   ["warn", "warn", 0.15, "surface-2"],
+  // 設定の画面の「設定済み」と、自動売買が止まっている理由の欄(T7)
+  ["up", "up", 0.15, "surface"],
+  ["fg", "warn", 0.15, "surface"],
 ];
 
 describe("テーマの色", () => {
