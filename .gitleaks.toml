@@ -13,7 +13,8 @@ regex = '''\b[AP]K[A-Z0-9]{18}\b'''
 [[allowlists]]
 description = "テストのダミーのキー(本物ではない。0 の並びで作っている)。前後まで固定して、本物に当たらないようにする"
 regexes = [
-  '''^PK(TEST|OTHER)KEY0+[A-Z]{2,4}$''',
+  '''^PK(TEST|OTHER|BAD)KEY0+[A-Z]{2,4}$''',
   '''^TestSecret0+(Zq9X)?$''',
   '''^OtherSecret0+$''',
+  '''^BadSecret0+$''',
 ]
