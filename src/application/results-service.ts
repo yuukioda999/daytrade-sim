@@ -53,9 +53,10 @@ export function getResultsView(deps: StoredDeps, now: Date): ResultsView {
         inProgress: !run.closed,
       };
     });
-    // 元手を途中で変えた時は、一番新しい日の元手に対する割合を出す(spec に書いていないことで決めたこと。ai-log)
+    // 元手を途中で変えた時は、一番新しい日の元手に対する割合を出す(SPEC-004 2026-11-20 追記)
     const principalJpy = runs[runs.length - 1].principalJpy;
-    live = { principalJpy, summary: summarize(rows, principalJpy), rows };
+    // まとめは締めた日だけで計算する。取引の途中の日は表とグラフにだけ出す(SPEC-004 2026-11-20 追記、T11 のレビュー 6)
+    live = { principalJpy, summary: summarize(rows.filter((r) => !r.inProgress), principalJpy), rows };
   }
 
   const run = repos.backtest.getRun();

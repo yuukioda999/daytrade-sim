@@ -71,12 +71,29 @@ describe("毎日ためた記録の成績(SPEC-004)", () => {
     expect(getResultsView({ repos }, NOW).live).toBeNull();
   });
 
-  it("AC-004-03: 締める前の日(今日の取引の途中)に印を付ける", () => {
+  it("AC-004-03: 締める前の日(今日の取引の途中)に印を付ける。まとめには入れない(SPEC-004 2026-11-20 追記)", () => {
     seedExample();
     repos.trading.putDayRun(run("2026-11-06", -500, false));
-    const rows = getResultsView({ repos }, NOW).live?.rows ?? [];
-    expect(rows.at(-1)).toMatchObject({ date: "2026-11-06", inProgress: true, pnlJpy: 0 });
+    repos.trading.replaceDayTrades("2026-11-06", [sold("2026-11-06", -900)]);
+    const v = getResultsView({ repos }, NOW);
+    const rows = v.live?.rows ?? [];
+    expect(rows.at(-1)).toMatchObject({ date: "2026-11-06", inProgress: true, pnlJpy: -900 });
     expect(rows.slice(0, -1).every((r) => !r.inProgress)).toBe(true);
+    // まとめは例の4日のまま(途中の -900 円は、合計にも一番損した日にも入れない)
+    expect(v.live?.summary).toMatchObject({ recordedDays: 4, totalPnlJpy: -500, worstDay: { date: "2026-11-03", pnlJpy: -310 } });
+  });
+
+  it("SPEC-004 2026-11-20 追記: 途中で元手を変えた時、残高はその日の元手、割合は一番新しい日の元手で出す", () => {
+    repos.trading.putDayRun(run("2026-11-02", 0));
+    repos.trading.replaceDayTrades("2026-11-02", [sold("2026-11-02", 100)]);
+    repos.trading.putDayRun({ ...run("2026-11-03", 100), principalJpy: 20_000 });
+    repos.trading.replaceDayTrades("2026-11-03", [sold("2026-11-03", 300)]);
+    const v = getResultsView({ repos }, NOW);
+    // 手計算: 11/02 は 10,000 + 100 = 10,100。11/03 は 20,000 + 100 + 300 = 20,400
+    expect(v.live?.rows.map((r) => r.endingBalanceJpy)).toEqual([10_100, 20_400]);
+    // 手計算: 合計 400 / 一番新しい日の元手 20,000 = 2%
+    expect(v.live?.principalJpy).toBe(20_000);
+    expect(v.live?.summary.totalPnlRatio).toBeCloseTo(0.02, 10);
   });
 
   it("AC-004-07: 「あとから処理」の印がある記録を含む日に印を付ける", () => {

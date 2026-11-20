@@ -37,7 +37,7 @@ function seedDay(date: string) {
 }
 
 describe("過去データで試す API(AC-006-12)", () => {
-  it("試した日数を返し、成績の API で別の欄として読める。ダッシュボードの API でその日を読める", async () => {
+  it("AC-006-12、AC-004-04、AC-007-18: 試した日数を返し、成績の API で別の欄として読める。ダッシュボードの API でその日を読める", async () => {
     seedDay("2026-11-02");
     const res = await POST(request("/api/backtest", "POST"));
     expect(res.status).toBe(200);
@@ -49,13 +49,13 @@ describe("過去データで試す API(AC-006-12)", () => {
     expect(await day.json()).toMatchObject({ mode: "backtest", date: "2026-11-02", isToday: false, backtestDates: ["2026-11-02"] });
   });
 
-  it("試せる日がなければ 422 と、どうすればよいかを返す", async () => {
+  it("AC-006-12: 試せる日がなければ 422 と、どうすればよいかを返す", async () => {
     const res = await POST(request("/api/backtest", "POST"));
     expect(res.status).toBe(422);
     expect((await res.json()).error).toContain("過去データ");
   });
 
-  it("試していない日や、形の違う日付は読めない", async () => {
+  it("AC-007-18: 試していない日や、形の違う日付は読めない", async () => {
     expect((await getDashboard(request("/api/dashboard?backtest=2026-11-02", "GET"))).status).toBe(404);
     expect((await getDashboard(request("/api/dashboard?backtest=x", "GET"))).status).toBe(400);
   });

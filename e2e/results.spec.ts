@@ -21,7 +21,7 @@ test.describe("成績の画面", () => {
     await expect(page.getByText("これからの利益を示すものではありません")).toBeVisible();
   });
 
-  test("AC-004-03: 毎日の記録で、取引の途中の日に「途中」と出す", async ({ page }) => {
+  test("AC-004-03: 毎日の記録で、取引の途中の日に「途中」と出し、まとめに入れない", async ({ page }) => {
     await open(page, "/results");
     const live = page.getByRole("region", { name: "毎日の自動売買の成績" });
     const row = live.getByRole("row", { name: /2026年11月2日/ });
@@ -32,9 +32,9 @@ test.describe("成績の画面", () => {
 
   test("AC-004-04、01: 毎日の記録と過去データで試した結果を、混ぜずに別の欄に出す", async ({ page }) => {
     await open(page, "/results");
+    // 毎日の記録は取引の途中の日だけなので、まとめはまだ出さない(SPEC-004 2026-11-20 追記)
     const live = page.getByTestId("live-summary");
-    await expect(live).toContainText("▼ -86円");
-    await expect(live).toContainText("記録した日数 1日");
+    await expect(live).toContainText("取引を締めた日がまだないので、まとめは今日の取引が終わってから出ます");
     const backtest = page.getByTestId("backtest-summary");
     await expect(backtest).toContainText("▼ -86円");
     await expect(backtest).toContainText("▼ -0.86%");
@@ -51,6 +51,8 @@ test.describe("成績の画面", () => {
     const chart = page.getByTestId("backtest-chart");
     await expect(chart.locator("svg")).toBeVisible();
     await expect(chart.locator('path[fill="var(--color-down)"]')).toHaveCount(1);
+    // 0円の線が軸に入る(1日だけの毎日の記録でも、棒が0円から下に伸びる)
+    await expect(page.getByTestId("live-chart").getByText("0円", { exact: true })).toBeVisible();
     await expect(page.getByText("41日分の日ごとの損益。プラスの日(上向きの緑)が0日、マイナスの日(下向きの赤)が1日")).toBeVisible();
   });
 
@@ -109,8 +111,12 @@ test.describe("過去データで試す", () => {
     const money = page.getByTestId("money-card");
     await expect(money).toContainText("10月1日(木)のお金の状況");
     await expect(money).toContainText("9,914円");
-    // 毎日の記録の様子(自動売買のプロセス)は出さない
+    // 毎日の記録の様子(自動売買のプロセス)と、毎日の記録の画面へのリンクは出さない
     await expect(page.getByTestId("worker-card")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "自動売買の記録を見る" })).toHaveCount(0);
+    // AC-007-04: スマホの幅でも、日付の表示と選び欄で横にはみ出さない
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 
   test("AC-007-18: 切り替えで今日の市場と過去データを行き来でき、試した日を選べる", async ({ page }) => {

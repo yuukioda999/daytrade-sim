@@ -96,9 +96,9 @@ function DashboardBody({ backtestDate, onBacktestDate }: { backtestDate: string 
       <div className="flex flex-col gap-4">
         {toggle}
         <p role="alert" className="text-down">
-          {backtestDate === null
-            ? "ダッシュボードを読み込めませんでした。画面を読み込み直してください"
-            : "その日は過去データで試していません。設定の画面で過去データで試してから、日を選んでください"}
+          {backtestDate !== null && state.notFound
+            ? "その日は過去データで試していません。設定の画面で過去データで試してから、日を選んでください"
+            : "ダッシュボードを読み込めませんでした。画面を読み込み直してください"}
         </p>
       </div>
     );
@@ -117,9 +117,9 @@ function DashboardBody({ backtestDate, onBacktestDate }: { backtestDate: string 
         <Watchlist view={view} selected={symbol.symbol} onSelect={setSelected} />
         <section aria-label="選んだ銘柄" className="flex min-w-0 flex-[999_1_520px] flex-col gap-4">
           <ChartCard view={symbol} />
-          <BuyCard trade={latestTrade(view.trades)} />
+          <BuyCard trade={latestTrade(view.trades)} showTradesLink={!backtest} />
         </section>
-        <section aria-label="今日のお金の状況" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
+        <section aria-label={`${dayLabelOf(view)}のお金の状況`} className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
           {!backtest && <WorkerCard view={view} />}
           <MoneyCard view={view} />
           <PositionsCard positions={view.positions} />
@@ -398,7 +398,7 @@ function ChartCard({ view }: { view: SymbolView }) {
   );
 }
 
-function BuyCard({ trade }: { trade: TradeView | null }) {
+function BuyCard({ trade, showTradesLink }: { trade: TradeView | null; showTradesLink: boolean }) {
   if (!trade) return null;
   return (
     <section aria-labelledby="buy-card-title" className={cn(card, "border-up")}>
@@ -422,9 +422,12 @@ function BuyCard({ trade }: { trade: TradeView | null }) {
         <p className="text-xs text-fg-sub">
           実際の注文は出していません。買いサインは条件がそろったことを示す表示で、買うことを勧めるものではありません。
         </p>
-        <Link href="/trades" className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 font-bold text-accent-fg">
-          自動売買の記録を見る
-        </Link>
+        {/* 自動売買の記録の画面は毎日の記録だけを出すので、過去データで試した日を見ている時は出さない */}
+        {showTradesLink && (
+          <Link href="/trades" className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 font-bold text-accent-fg">
+            自動売買の記録を見る
+          </Link>
+        )}
       </div>
     </section>
   );
@@ -480,9 +483,11 @@ function MoneyCard({ view }: { view: View }) {
         <h2 id="money-title" className={subhead}>
           {day}のお金の状況
         </h2>
-        <Link href="/trades" className="inline-flex min-h-11 items-center text-xs text-accent-soft">
-          詳細
-        </Link>
+        {view.mode === "live" && (
+          <Link href="/trades" className="inline-flex min-h-11 items-center text-xs text-accent-soft">
+            詳細
+          </Link>
+        )}
       </div>
       <p className="text-xs text-fg-muted">
         残高。元手<span className="text-[11px]">(元本)</span>は {formatJpy(m.principalJpy)}
@@ -510,7 +515,7 @@ function MoneyCard({ view }: { view: View }) {
       </div>
       <div
         role="img"
-        aria-label={`今日の損失の上限の ${usedPercent}% を使用`}
+        aria-label={`${day}の損失の上限の ${usedPercent}% を使用`}
         className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-muted"
       >
         <div className={cn("h-full", m.limitReached ? "bg-down" : "bg-warn")} style={{ width: `${usedPercent}%` }} />

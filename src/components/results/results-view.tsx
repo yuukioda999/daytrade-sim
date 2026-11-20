@@ -93,31 +93,38 @@ function SectionBody({ section, idPrefix, linkToDashboard = false }: { section: 
     <>
       <p className="text-xs text-fg-muted">
         {firstDate && lastDate
-          ? `${formatDateJa(firstDate, { withYear: true })}から${formatDateJa(lastDate, { withYear: true })}まで、${s.recordedDays}日分`
+          ? `${formatDateJa(firstDate, { withYear: true })}から${formatDateJa(lastDate, { withYear: true })}まで、${section.rows.length}日分`
           : ""}
+        {section.rows.some((r) => r.inProgress) ? "。まとめは取引を締めた日だけで計算し、取引の途中の日は入れていません" : ""}
       </p>
-      <dl className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3" data-testid={`${idPrefix}-summary`}>
-        <Fact label="合計の損益">
-          <SignedText value={formatSignedJpy(s.totalPnlJpy)} />
-          <span className="block text-xs font-normal text-fg-muted">
-            元手 {formatJpy(section.principalJpy)}に対して <SignedText value={formatSignedRatio(s.totalPnlRatio)} />
-          </span>
-        </Fact>
-        <Fact label="プラスの日 / マイナスの日">
-          {s.plusDays}日 / {s.minusDays}日
-          <span className="block text-xs font-normal text-fg-muted">
-            0円の日 {s.zeroDays}日。記録した日数 {s.recordedDays}日
-          </span>
-        </Fact>
-        <Fact label="一番損した日">
-          {s.worstDay ? <SignedText value={formatSignedJpy(s.worstDay.pnlJpy)} /> : "なし"}
-          <span className="block text-xs font-normal text-fg-muted">{s.worstDay ? formatDateJa(s.worstDay.date, { withYear: true }) : ""}</span>
-        </Fact>
-        <Fact label="損失の上限で止まった日">
-          {s.limitReachedDays}日
-          <span className="block text-xs font-normal text-fg-muted">上限は1日あたり元手の10%(デイリー損失リミット)</span>
-        </Fact>
-      </dl>
+      {s.recordedDays === 0 ? (
+        <p className={cn(card, "text-fg-sub")} data-testid={`${idPrefix}-summary`}>
+          取引を締めた日がまだないので、まとめは今日の取引が終わってから出ます。
+        </p>
+      ) : (
+        <dl className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3" data-testid={`${idPrefix}-summary`}>
+          <Fact label="合計の損益">
+            <SignedText value={formatSignedJpy(s.totalPnlJpy)} />
+            <span className="block text-xs font-normal text-fg-muted">
+              元手 {formatJpy(section.principalJpy)}に対して <SignedText value={formatSignedRatio(s.totalPnlRatio)} />
+            </span>
+          </Fact>
+          <Fact label="プラスの日 / マイナスの日">
+            {s.plusDays}日 / {s.minusDays}日
+            <span className="block text-xs font-normal text-fg-muted">
+              0円の日 {s.zeroDays}日。記録した日数 {s.recordedDays}日
+            </span>
+          </Fact>
+          <Fact label="一番損した日">
+            {s.worstDay ? <SignedText value={formatSignedJpy(s.worstDay.pnlJpy)} /> : "なし"}
+            <span className="block text-xs font-normal text-fg-muted">{s.worstDay ? formatDateJa(s.worstDay.date, { withYear: true }) : ""}</span>
+          </Fact>
+          <Fact label="損失の上限で止まった日">
+            {s.limitReachedDays}日
+            <span className="block text-xs font-normal text-fg-muted">上限は1日あたり元手の10%(デイリー損失リミット)</span>
+          </Fact>
+        </dl>
+      )}
       <DailyChart rows={section.rows} idPrefix={idPrefix} />
       <DailyTable rows={section.rows} idPrefix={idPrefix} linkToDashboard={linkToDashboard} />
     </>
@@ -150,7 +157,14 @@ function DailyChart({ rows, idPrefix }: { rows: ResultRow[]; idPrefix: string })
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
             <CartesianGrid stroke="var(--color-muted)" vertical={false} />
             <XAxis dataKey="date" tick={AXIS_TICK} stroke="var(--color-border)" interval="preserveStartEnd" minTickGap={16} />
-            <YAxis tick={AXIS_TICK} stroke="var(--color-border)" width={56} tickFormatter={(v: number) => `${Math.round(v)}円`} />
+            <YAxis
+              tick={AXIS_TICK}
+              stroke="var(--color-border)"
+              width={56}
+              // 0円を必ず入れる(1日だけの時も、棒が0円から上か下に伸びて見えるように。AC-004-06)
+              domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
+              tickFormatter={(v: number) => `${Math.round(v)}円`}
+            />
             <ReferenceLine y={0} stroke="var(--color-input)" />
             <Bar dataKey="pnl" isAnimationActive={false}>
               {data.map((d, i) => (

@@ -102,14 +102,41 @@ describe("過去データで試す(SPEC-006 AC-006-12、ADR-0010)", () => {
     expect(day?.limitReached).toBe(true);
   });
 
-  it("試すたびに、前の結果を置き換える", () => {
+  it("AC-006-12: 引き継いだ損益で残高が予算より少なくなると、次の日はその残りで買う(SPEC-003 定義 3)", () => {
+    // 11/02 と 11/03 は 09:55 の足が 15.00 から始まり、損切りの価格より下の始値で売る。11/04 はいつもの形
+    const crash = (d: string) => {
+      const b = soxlOn(d);
+      return [...b.slice(0, 5), { ...b[5], open: 15, high: 15.5, low: 14.5, close: 15 }];
+    };
+    const fresh = memoryRepositories(() => NOW);
+    const days = ["2026-11-02", "2026-11-03", "2026-11-04"];
+    for (const day of [...BASELINE_DAYS, ...days]) {
+      for (const s of WATCHLIST) {
+        const bars =
+          s !== "SOXL" || BASELINE_DAYS.includes(day) ? pastDayBars(s, day) : day === "2026-11-04" ? soxlOn(day) : crash(day);
+        fresh.bars.saveBars(bars);
+        fresh.bars.markFetched(s, [day]);
+      }
+    }
+    runBacktest({ repos: fresh }, NOW);
+    const result = (d: string) => fresh.backtest.listDays().find((x) => x.date === d);
+    // 手計算: (15.00 - 78.45) × 0.4248 × 150 = -4,043.034 円を2日
+    expect(result("2026-11-02")?.pnlJpy).toBeCloseTo(-4043.034, 6);
+    expect(result("2026-11-04")?.startingRealizedJpy).toBeCloseTo(-8086.068, 6);
+    // 手計算: 残高 10,000 - 8,086.068 = 1,913.932 円。株数 = 1,913.932 / (78.45 × 150) = 0.16264 → 0.1626
+    expect(fresh.backtest.listTrades("2026-11-04")[0].shares).toBe(0.1626);
+    // 予算の 5,000円で買った日は 0.4248株
+    expect(fresh.backtest.listTrades("2026-11-02")[0].shares).toBe(0.4248);
+  });
+
+  it("AC-006-12(SPEC-006 追記): 試すたびに、前の結果を置き換える", () => {
     runBacktest({ repos }, NOW);
     runBacktest({ repos }, NOW);
     expect(repos.backtest.listDays()).toHaveLength(22);
     expect(repos.backtest.listTrades("2026-11-02")).toHaveLength(1);
   });
 
-  it("試せる日がなければ、何も保存せずに理由を返す", () => {
+  it("AC-006-12: 試せる日がなければ、何も保存せずに理由を返す", () => {
     const empty = memoryRepositories(() => NOW);
     expect(runBacktest({ repos: empty }, NOW)).toEqual({ ok: false, reason: "no-data" });
     expect(empty.backtest.getRun()).toBeNull();

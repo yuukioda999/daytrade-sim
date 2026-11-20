@@ -8,8 +8,14 @@ export const REFRESH_MS = 60_000;
 
 export type DashboardState =
   | { status: "loading" }
-  | { status: "error" }
+  | { status: "error"; notFound: boolean }
   | { status: "ready"; view: DashboardView; refreshFailed: boolean };
+
+class HttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
 
 type Loaded = { url: string; state: DashboardState };
 
@@ -27,19 +33,20 @@ export function useDashboard(backtestDate: string | null = null): DashboardState
     let cancelled = false;
     const load = () =>
       fetch(url, { cache: "no-store" })
-        .then((res) => (res.ok ? (res.json() as Promise<DashboardView>) : Promise.reject(new Error(String(res.status)))))
+        .then((res) => (res.ok ? (res.json() as Promise<DashboardView>) : Promise.reject(new HttpError(res.status))))
         .then((view) => {
           if (cancelled) return;
           setLoaded({ url, state: { status: "ready", view, refreshFailed: false } });
           setLastView(view);
         })
-        .catch(() => {
+        .catch((e: unknown) => {
           if (cancelled) return;
+          const notFound = e instanceof HttpError && e.status === 404;
           // 一度読めていれば、前の値を出したまま、読み直せなかったことを出す
           setLoaded((prev) =>
             prev?.url === url && prev.state.status === "ready"
               ? { url, state: { ...prev.state, refreshFailed: true } }
-              : { url, state: { status: "error" } },
+              : { url, state: { status: "error", notFound } },
           );
         });
     void load();
