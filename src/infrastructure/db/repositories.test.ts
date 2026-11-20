@@ -57,6 +57,10 @@ describe("SQLite のファイル", () => {
       const db1 = openDatabase(file);
       sqliteRepositories(db1).settings.setAutoTradingEnabled(true);
       expect(db1.$client.pragma("journal_mode", { simple: true })).toBe("wal");
+      // キーを平文で保存するので、自分だけが読める権限(T7 のセキュリティレビュー)
+      const { statSync } = await import("node:fs");
+      expect(statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+      for (const f of [file, `${file}-wal`, `${file}-shm`]) expect(statSync(f).mode & 0o777).toBe(0o600);
       db1.$client.close();
       const db2 = openDatabase(file);
       expect(sqliteRepositories(db2).settings.getAutoTradingEnabled()).toBe(true);

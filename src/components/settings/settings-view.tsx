@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/components/ui/cn";
 import type { MoneyErrors, MoneyView, SettingsView as View } from "@/application/settings-service";
@@ -68,25 +68,50 @@ function Section({ id, title, aside, children }: { id: string; title: string; as
   );
 }
 
-/** 保存の結果を読み上げる欄。成功は status、失敗は alert */
+/**
+ * 保存の結果を読み上げる欄。成功(status)と失敗(alert)の欄を最初から別々に置き、中身だけを入れ替える
+ * (role を途中で変えると、読み上げソフトによっては読まれないため。T7 のレビュー 9)
+ */
 function Message({ message }: { message: { kind: "ok" | "error"; text: string } | null }) {
   return (
-    <p
-      role={message?.kind === "error" ? "alert" : "status"}
-      className={cn("min-h-5 text-sm", message?.kind === "error" ? "text-down" : "text-up")}
-    >
-      {message?.text}
-    </p>
+    <div className="min-h-5 text-sm">
+      <p role="status" className="text-up">
+        {message?.kind === "ok" ? message.text : ""}
+      </p>
+      <p role="alert" className="text-down">
+        {message?.kind === "error" ? message.text : ""}
+      </p>
+    </div>
   );
+}
+
+/** 保存できなかった時に、最初のエラーの入力欄へフォーカスを移す */
+function useFocusFirstError(errors: Record<string, string | undefined>, refs: [string, RefObject<HTMLInputElement | null>][]) {
+  const [token, setToken] = useState(0);
+  useEffect(() => {
+    if (token === 0) return;
+    for (const [key, ref] of refs) {
+      if (errors[key]) {
+        ref.current?.focus();
+        return;
+      }
+    }
+    // token が変わった時だけ動かす(errors と refs は同じ描画で決まる)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+  return () => setToken((t) => t + 1);
 }
 
 function AutoTradingSection({ view, onChange }: SectionProps) {
   const id = useId();
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
   const { budgetJpy, dailyLossLimitJpy } = view.limits;
 
   const toggle = async (enabled: boolean) => {
     setMessage(null);
+    // 送っている間はスイッチを押せなくし、送った順と反映する順がずれないようにする
+    setBusy(true);
     try {
       const { status, data } = await send<View>("/api/settings/auto-trading", "PUT", { enabled });
       if (status !== 200) throw new Error();
@@ -94,6 +119,8 @@ function AutoTradingSection({ view, onChange }: SectionProps) {
       setMessage({ kind: "ok", text: enabled ? "自動売買を ON にしました" : "自動売買を OFF にしました" });
     } catch {
       setMessage({ kind: "error", text: "保存できませんでした" });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -107,11 +134,11 @@ function AutoTradingSection({ view, onChange }: SectionProps) {
           <span aria-hidden="true" className="w-8 text-right text-sm font-semibold text-fg-sub">
             {view.autoTrading.enabled ? "ON" : "OFF"}
           </span>
-          <Switch id={id} checked={view.autoTrading.enabled} onCheckedChange={toggle} />
+          <Switch id={id} checked={view.autoTrading.enabled} disabled={busy} onCheckedChange={toggle} />
         </div>
       </div>
       <p className="text-sm text-fg-muted">
-        買いサインが出ると、アプリが自動で練習売買(ペーパートレード)を記録します。実際の注文は出しません。OFF にすると新しく買いませんが、持っている株の売りの判定は続けます。
+        買いサインが出ると、アプリが自動で練習売買<span className="text-[11px]">(ペーパートレード)</span>を記録します。実際の注文は出しません。OFF にすると新しく買いませんが、持っている株の売りの判定は続けます。
       </p>
       {view.autoTrading.blockedReason && (
         <p className="rounded-lg border border-warn/40 bg-warn/15 px-3 py-2 text-sm text-fg" data-testid="auto-trading-blocked">
@@ -149,6 +176,12 @@ function CredentialsSection({ view, onChange }: SectionProps) {
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const { configured, keyIdLast4 } = view.credentials;
+  const keyIdRef = useRef<HTMLInputElement>(null);
+  const secretRef = useRef<HTMLInputElement>(null);
+  const focusFirstError = useFocusFirstError(errors, [
+    ["keyId", keyIdRef],
+    ["secret", secretRef],
+  ]);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -162,6 +195,7 @@ function CredentialsSection({ view, onChange }: SectionProps) {
       if (status === 422 && "errors" in data) {
         setErrors(data.errors);
         setMessage({ kind: "error", text: "保存していません。入力を確かめてください" });
+        focusFirstError();
       } else if (status === 200 && !("errors" in data)) {
         setErrors({});
         // 保存したキーは、画面の入力欄にも残さない
@@ -216,6 +250,7 @@ function CredentialsSection({ view, onChange }: SectionProps) {
       <form onSubmit={save} className="flex flex-col gap-3" noValidate>
         <Field id={keyIdId} label="キー ID" error={errors.keyId}>
           <input
+            ref={keyIdRef}
             id={keyIdId}
             name="keyId"
             type="text"
@@ -230,6 +265,7 @@ function CredentialsSection({ view, onChange }: SectionProps) {
         </Field>
         <Field id={secretId} label="シークレット" error={errors.secret}>
           <input
+            ref={secretRef}
             id={secretId}
             name="secret"
             type="password"
@@ -274,26 +310,36 @@ function MoneySection({ view, onChange }: SectionProps) {
   const [errors, setErrors] = useState<MoneyErrors>({});
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const principalRef = useRef<HTMLInputElement>(null);
+  const fxRef = useRef<HTMLInputElement>(null);
+  const focusFirstError = useFocusFirstError(errors, [
+    ["principal", principalRef],
+    ["fxRate", fxRef],
+  ]);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setMessage(null);
     setBusy(true);
     try {
-      const { status, data } = await send<View | { errors: MoneyErrors }>("/api/settings/money", "PUT", {
+      const { status, data } = await send<View | { errors: MoneyErrors } | { error: string }>("/api/settings/money", "PUT", {
         principal,
         fxRate,
       });
       if (status === 422 && "errors" in data) {
         setErrors(data.errors);
         setMessage({ kind: "error", text: "保存していません。入力を確かめてください" });
-      } else if (status === 200 && !("errors" in data)) {
+        focusFirstError();
+      } else if (status === 503 && "error" in data && typeof data.error === "string") {
+        // 休場日の表が古くて、次の取引日を決められない時
+        setMessage({ kind: "error", text: data.error });
+      } else if (status === 200 && "money" in data) {
         setErrors({});
         onChange(data);
         const s = data.money.scheduled;
         setMessage({
           kind: "ok",
-          text: s ? `保存しました。${formatDateJa(s.effectiveDate ?? "")}から使います` : "保存しました。今日から使います",
+          text: s ? `保存しました。${formatDateJa(s.effectiveDate)}から使います` : "保存しました。今日から使います",
         });
       } else {
         throw new Error();
@@ -316,7 +362,7 @@ function MoneySection({ view, onChange }: SectionProps) {
         </div>
         {scheduled && (
           <div className="flex flex-wrap gap-x-2">
-            <dt className="text-fg-muted">{formatDateJa(scheduled.effectiveDate ?? "")}から</dt>
+            <dt className="text-fg-muted">{formatDateJa(scheduled.effectiveDate)}から</dt>
             <dd className="tabular-nums" data-testid="money-scheduled">
               {moneyText(scheduled)}
             </dd>
@@ -325,8 +371,9 @@ function MoneySection({ view, onChange }: SectionProps) {
       </dl>
       <form onSubmit={save} className="flex flex-col gap-3" noValidate>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
-          <Field id={principalId} label="最初の元手(円)" note="元本。1,000 から 10,000,000 の整数" error={errors.principal}>
+          <Field id={principalId} label="元手(円)" note="元本。1,000 から 10,000,000 の整数" error={errors.principal}>
             <input
+              ref={principalRef}
               id={principalId}
               name="principal"
               type="text"
@@ -341,6 +388,7 @@ function MoneySection({ view, onChange }: SectionProps) {
           </Field>
           <Field id={fxId} label="為替レート(1ドルあたりの円)" note="50 から 300。小数2桁まで" error={errors.fxRate}>
             <input
+              ref={fxRef}
               id={fxId}
               name="fxRate"
               type="text"

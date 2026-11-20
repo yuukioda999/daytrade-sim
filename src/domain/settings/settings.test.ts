@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  effectiveMoneyOn,
   fixedLimitsJpy,
   keyIdLast4,
   moneySettingsOn,
@@ -98,6 +99,11 @@ describe("AC-006-15: 元手か為替を変えると、次の取引日から使�
     expect(moneySettingsOn([first], "2026-11-01")).toBeNull();
   });
 
+  it("まだ一度も保存していなければ、既定の値(元手 10,000円、為替 150)を使う", () => {
+    expect(effectiveMoneyOn([], "2026-11-20")).toEqual({ effectiveDate: null, principalJpy: 10_000, fxRateX100: 15_000 });
+    expect(effectiveMoneyOn([first], "2026-11-20")).toEqual(first);
+  });
+
   it("並び順によらず、その日以前で最も新しい設定を選ぶ", () => {
     const later: MoneySettings = { effectiveDate: "2026-11-10", principalJpy: 30_000, fxRateX100: 15_500 };
     expect(moneySettingsOn([later, first], "2026-11-12")).toEqual(later);
@@ -107,6 +113,11 @@ describe("AC-006-15: 元手か為替を変えると、次の取引日から使�
 describe("AC-006-02: 1回の買いの予算と今日の損失の上限", () => {
   it("元手 10,000円 なら、予算 5,000円(50%)、上限 1,000円(10%)", () => {
     expect(fixedLimitsJpy(10_000)).toEqual({ budgetJpy: 5_000, dailyLossLimitJpy: 1_000 });
+  });
+  it("元手が奇数でも割ったまま(1,001円なら予算 500.5円)。画面では SPEC-003 定義 7 のとおり四捨五入して出す", () => {
+    const limits = fixedLimitsJpy(1_001);
+    expect(limits.budgetJpy).toBe(500.5);
+    expect(limits.dailyLossLimitJpy).toBeCloseTo(100.1, 9);
   });
   it("元手の上限 10,000,000円 でも割合どおり", () => {
     expect(fixedLimitsJpy(10_000_000)).toEqual({ budgetJpy: 5_000_000, dailyLossLimitJpy: 1_000_000 });

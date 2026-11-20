@@ -1,8 +1,10 @@
+import { roundYen } from "@/domain/trading/round-yen";
+
 const jpy = new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 });
 
-/** 12,345円 */
+/** 12,345円。1円未満は SPEC-003 定義 7 のとおり四捨五入する */
 export function formatJpy(value: number): string {
-  return `${jpy.format(value)}円`;
+  return `${jpy.format(roundYen(value))}円`;
 }
 
 /** 為替レートは小数2桁で出す(150.00) */

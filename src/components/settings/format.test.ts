@@ -4,6 +4,9 @@ import { formatDateJa, formatFxRate, formatJpy } from "./format";
 describe("設定の画面の表し方", () => {
   it("円は桁区切り", () => {
     expect(formatJpy(10_000_000)).toBe("10,000,000円");
+    // 元手 1,001円 の予算(500.5円)と損失の上限(100.1円)
+    expect(formatJpy(500.5)).toBe("501円");
+    expect(formatJpy(1_001 * 0.1)).toBe("100円");
   });
   it("為替レートは小数2桁", () => {
     expect(formatFxRate(150)).toBe("150.00");

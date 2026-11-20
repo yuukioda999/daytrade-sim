@@ -130,9 +130,11 @@ describe("元手と為替、自動売買の API", () => {
   });
 });
 
-describe("このパソコンの画面からだけ使える(ADR-0006 の補強)", () => {
+describe("ブラウザを通した、別のサイトからの呼び出しを断る(ADR-0006 の補強)", () => {
+  // 同じネットワークの別のパソコンからの呼び出しは、127.0.0.1 だけで待ち受けることで防ぐ(package.json)。
+  // Host は送る側が決められるので、ここで確かめるのは DNS の付け替え(別のサイトの名前で来る呼び出し)への備え
   it.each(["10.32.1.38:3000", "evil.example.com", "localhost.evil.example.com:3000"])(
-    "Host が %s なら、読み込みも書き込みも 403",
+    "Host が %s(localhost 以外の名前)なら、読み込みも書き込みも 403",
     async (host) => {
       await saveKey();
       expect((await GET(request("/api/settings", { headers: { host } }))).status).toBe(403);
@@ -188,5 +190,47 @@ describe("このパソコンの画面からだけ使える(ADR-0006 の補強)",
     );
     expect(res.status).toBe(415);
     expect(repos.credentials.get()).toBeNull();
+  });
+});
+
+describe("エラーの時もキーを出さない(ADR-0006)", () => {
+  it("本文が大きすぎる時は読まずに 400", async () => {
+    const res = await putCredentials(
+      request("/api/settings/credentials", {
+        method: "PUT",
+        body: JSON.stringify({ keyId: KEY_ID, secret: SECRET, pad: "x".repeat(20_000) }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(repos.credentials.get()).toBeNull();
+  });
+
+  it("保存の途中でエラーになり、エラー文にキーが入っていても、応答とログにキーを出さない", async () => {
+    vi.spyOn(repos.credentials, "save").mockImplementation((c) => {
+      // 失敗した SQL の値をエラー文に入れる道具を想定する
+      throw new Error(`Failed query: insert ... params: ${c.keyId},${c.secret}`);
+    });
+    const res = await saveKey();
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(text).not.toContain(KEY_ID);
+    expect(text).not.toContain(SECRET);
+    const logs = logged.join("\n");
+    expect(logs).toContain("エラーが起きました(Error)");
+    expect(logs).not.toContain(KEY_ID);
+    expect(logs).not.toContain(SECRET);
+  });
+
+  it("休場日の表にない年に入ると、表の更新が必要だと返す(503)", async () => {
+    // 2027-12-31(表の最後の年の最終日)に2回目の保存をすると、次の取引日が 2028年になる
+    vi.useFakeTimers({ now: new Date("2027-12-31T17:00:00Z"), toFake: ["Date"] });
+    try {
+      repos.settings.putMoneySettings({ effectiveDate: "2027-12-01", principalJpy: 10_000, fxRateX100: 15_000 });
+      const res = await putMoney(request("/api/settings/money", { method: "PUT", body: { principal: "20000", fxRate: "150" } }));
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toContain("休場日の表");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

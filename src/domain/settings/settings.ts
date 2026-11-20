@@ -71,6 +71,23 @@ export function moneySettingsOn(history: readonly MoneySettings[], date: string)
 }
 
 /**
+ * その日に使う元手と為替レート。まだ一度も保存していなければ既定の値(effectiveDate は null)。
+ * 画面と自動売買(T9)の両方がこれを使い、既定の値を1か所で決める(T7 のレビュー 4)
+ */
+export function effectiveMoneyOn(
+  history: readonly MoneySettings[],
+  date: string,
+): { effectiveDate: string | null; principalJpy: number; fxRateX100: number } {
+  return (
+    moneySettingsOn(history, date) ?? {
+      effectiveDate: null,
+      principalJpy: DEFAULT_PRINCIPAL_JPY,
+      fxRateX100: DEFAULT_FX_RATE_X100,
+    }
+  );
+}
+
+/**
  * 元手と為替レートの変更を、いつから使うかを決める(AC-006-15、SPEC-003 定義 12)。
  * まだ一度も設定していない時は、記録がないのですぐ使う(today から)。
  * 設定がある時は、日の途中で計算の前提が変わらないように、次の取引日から使う。

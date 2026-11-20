@@ -65,6 +65,32 @@ describe("AC-006-15: 元手と為替を変えると、次の取引日から使�
   });
 });
 
+describe("AC-006-15: 「今日」は米国東部時間の日付で決める(日本時間や UTC の日付ではない)", () => {
+  const withHistory = () => {
+    const repos = memoryRepositories();
+    repos.settings.putMoneySettings({ effectiveDate: "2026-01-02", principalJpy: 10_000, fxRateX100: 15_000 });
+    return repos;
+  };
+  const scheduledDate = (now: Date) => {
+    const r = updateMoney(withHistory(), { principal: "20000", fxRate: "150" }, now);
+    return r.ok ? r.view.money.scheduled?.effectiveDate : undefined;
+  };
+
+  it.each([
+    // 東部時間の日曜の夜は、UTC と日本時間ではもう月曜。東部時間では日曜なので、次の取引日は月曜
+    ["冬時間の日曜 20:00 ET(UTC は月曜 01:00)", "2026-11-23T01:00:00Z", "2026-11-23"],
+    ["夏時間の日曜 20:00 ET(UTC は月曜 00:00)", "2026-06-08T00:00:00Z", "2026-06-08"],
+    // 木曜の夜に変えると金曜から。UTC の日付(金曜)で決めると月曜になってしまう
+    ["冬時間の木曜 20:00 ET(UTC は金曜 01:00)", "2026-11-06T01:00:00Z", "2026-11-06"],
+    // 夏時間が終わる日(11/1)の夜。冬時間(UTC-5)で数えないと月曜 00:30 になり、次の取引日が火曜にずれる
+    ["夏時間が終わる日曜 23:30 ET(冬時間に変わったあと)", "2026-11-02T04:30:00Z", "2026-11-02"],
+    // 夏時間が始まる日(3/8)の夜。夏時間(UTC-4)で数える
+    ["夏時間が始まる日曜 22:30 ET(夏時間に変わったあと)", "2026-03-09T02:30:00Z", "2026-03-09"],
+  ])("%s に変えると、%s から使う", (_, iso, expected) => {
+    expect(scheduledDate(new Date(iso))).toBe(expected);
+  });
+});
+
 describe("AC-006-13、14: 元手か為替が違えば、どちらも保存しない", () => {
   it("どこが違うかを、項目ごとに返す", () => {
     const repos = memoryRepositories();

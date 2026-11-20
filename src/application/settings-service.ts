@@ -1,11 +1,9 @@
 import { toEastern } from "@/domain/market/eastern-time";
 import {
-  DEFAULT_FX_RATE_X100,
-  DEFAULT_PRINCIPAL_JPY,
   fixedLimitsJpy,
   fxRateFromX100,
   keyIdLast4,
-  moneySettingsOn,
+  effectiveMoneyOn,
   parseFxRate,
   parsePrincipal,
   scheduleMoneyChange,
@@ -25,6 +23,9 @@ export type MoneyView = {
   effectiveDate: string | null;
 };
 
+/** 次の取引日から使う予定の値。使い始める日は必ずある */
+export type ScheduledMoneyView = MoneyView & { effectiveDate: string };
+
 /**
  * 設定の画面と API に返す値。接続用キーは、設定済みかどうかとキー ID の末尾4文字だけ(AC-006-03、04)。
  * シークレットとキー ID の全文は、この型に入れない。
@@ -38,7 +39,7 @@ export type SettingsView = {
   money: {
     current: MoneyView;
     /** 次の取引日から使う予定の値(AC-006-15)。なければ null */
-    scheduled: MoneyView | null;
+    scheduled: ScheduledMoneyView | null;
   };
   /** 今の元手から決まる、変えられない値(AC-006-02) */
   limits: { budgetJpy: number; dailyLossLimitJpy: number };
@@ -56,13 +57,15 @@ function todayEastern(now: Date): string {
 export function getSettingsView(repos: Repositories, now: Date): SettingsView {
   const today = todayEastern(now);
   const history = repos.settings.listMoneySettings();
-  const current = moneySettingsOn(history, today);
+  const current = effectiveMoneyOn(history, today);
   const upcoming = history.filter((h) => h.effectiveDate > today);
   const scheduled = upcoming.length > 0 ? upcoming[upcoming.length - 1] : null;
 
-  const currentView: MoneyView = current
-    ? { principalJpy: current.principalJpy, fxRate: fxRateFromX100(current.fxRateX100), effectiveDate: current.effectiveDate }
-    : { principalJpy: DEFAULT_PRINCIPAL_JPY, fxRate: fxRateFromX100(DEFAULT_FX_RATE_X100), effectiveDate: null };
+  const currentView: MoneyView = {
+    principalJpy: current.principalJpy,
+    fxRate: fxRateFromX100(current.fxRateX100),
+    effectiveDate: current.effectiveDate,
+  };
 
   const enabled = repos.settings.getAutoTradingEnabled() ?? DEFAULT_AUTO_TRADING_ENABLED;
   const creds = repos.credentials.get();
