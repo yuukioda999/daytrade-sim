@@ -5,6 +5,7 @@ import {
   CalendarOutOfRangeError,
   closedReason,
   isMarketOpen,
+  nextTradingDate,
   orbBarStarts,
   sessionOn,
 } from "./market-calendar";
@@ -129,5 +130,21 @@ describe("休場日の表", () => {
     // UTC の日付で判定すると、表にない 2028 年としてエラーになる
     expect(() => isMarketOpen(at("2028-01-01T04:30:00Z"))).not.toThrow();
     expect(isMarketOpen(at("2028-01-01T04:30:00Z"))).toBe(false);
+  });
+});
+
+describe("次の取引日(SPEC-006 AC-006-15 の前提)", () => {
+  it.each([
+    ["2026-11-20", "2026-11-23", "金曜日の次は月曜日"],
+    ["2026-11-25", "2026-11-27", "感謝祭(11/26)を飛ばす。11/27 は短縮取引日だが取引日"],
+    ["2026-12-24", "2026-12-28", "クリスマス(12/25)と週末を飛ばす"],
+    ["2026-12-31", "2027-01-04", "元日(1/1)と週末を飛ばして年をまたぐ"],
+    ["2026-11-21", "2026-11-23", "土曜日から"],
+  ])("%s の次の取引日は %s(%s)", (date, expected) => {
+    expect(nextTradingDate(date)).toBe(expected);
+  });
+
+  it("休場日の表にない年に入る時はエラー", () => {
+    expect(() => nextTradingDate("2027-12-31")).toThrow(CalendarOutOfRangeError);
   });
 });

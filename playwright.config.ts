@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3100;
+const E2E_DB_PATH = ".e2e/daytrade-e2e.db";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -34,10 +35,13 @@ export default defineConfig({
   webServer: {
     // CI では本番と同じビルドで確かめる。手元では開発サーバーを使う
     command: process.env.CI
-      ? `npm run build && npm run start -- --port ${PORT}`
-      : `npm run dev -- --port ${PORT}`,
+      ? `rm -rf .e2e && npm run build && npm run start -- --port ${PORT}`
+      : `rm -rf .e2e && npm run dev -- --port ${PORT}`,
     port: PORT,
     reuseExistingServer: !process.env.CI,
+    // 画面のテストは、本番の data/ とは別の DB ファイルを使う。サーバーを立ち上げる時に消して、空の DB から始める。
+    // 手元で立ち上げ済みのサーバーを使い回す時は消えないので、テストは前の状態に頼らない作りにする
+    env: { DAYTRADE_DB_PATH: E2E_DB_PATH },
     timeout: 180_000,
   },
 });

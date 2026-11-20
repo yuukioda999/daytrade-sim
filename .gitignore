@@ -11,6 +11,8 @@ coverage/
 .env.*
 !.env.example
 data/
+# 画面のテストが使う DB
+.e2e/
 
 # テストの成果物
 playwright-report/
