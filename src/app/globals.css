@@ -46,11 +46,16 @@ html {
   color-scheme: dark;
 }
 
-/* shadcn/ui の部品の枠線の色(Tailwind v4 の枠線の既定は文字の色のため) */
-*,
-::before,
-::after {
-  border-color: var(--color-border);
+/*
+ * shadcn/ui の部品の枠線の色(Tailwind v4 の枠線の既定は文字の色のため)。
+ * @layer base に入れて、border-primary などの指定のほうが勝つようにする(T6 のレビュー 4)
+ */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-border);
+  }
 }
 
 body {

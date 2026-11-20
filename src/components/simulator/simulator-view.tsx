@@ -94,8 +94,9 @@ export function SimulatorView() {
             testId="slider-savings"
           />
 
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <label htmlFor={taxId} className="cursor-pointer">
+          <div className="flex items-center justify-between gap-3">
+            {/* 行の左側全体を押せる範囲にする(スイッチの部品が小さいため。T6 のレビュー 9) */}
+            <label htmlFor={taxId} className="flex min-h-11 flex-1 cursor-pointer items-center">
               税金({TAX_PERCENT_LABEL})を引く
             </label>
             <div className="flex items-center gap-2">
@@ -143,7 +144,7 @@ export function SimulatorView() {
             </h2>
             <SimulatorChart data={data} years={steps.years} />
             {steps.taxOn && (
-              <p className="mt-2 text-xs text-fg-muted">年末に線が少し下がるのは、その年の利益から税金を引いているためです。</p>
+              <p className="mt-2 text-xs text-fg-muted">年末に、その年の利益から税金を引いています。</p>
             )}
           </section>
 
@@ -160,10 +161,10 @@ export function SimulatorView() {
               className="mt-3 overflow-x-auto"
               tabIndex={0}
               role="region"
-              aria-labelledby="sim-table"
+              aria-label="年次の表(横に動かせます)"
               data-testid="year-table-scroll"
             >
-              <table className="w-full min-w-[820px] text-right text-sm tabular-nums">
+              <table className="w-full min-w-[820px] text-right text-sm whitespace-nowrap tabular-nums">
                 <thead>
                   <tr className="border-b text-xs text-fg-muted">
                     <th scope="col" className="p-2 text-left font-medium">
