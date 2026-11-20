@@ -28,6 +28,11 @@ const TEXT_PAIRS: ReadonlyArray<[fg: string, bg: string]> = [
   ["down", "surface-2"],
   ["warn", "surface"],
   ["accent-fg", "accent"],
+  // shadcn/ui の部品の色の名前(T6)
+  ["primary-foreground", "primary"],
+  ["card-foreground", "card"],
+  ["muted-foreground", "card"],
+  ["foreground", "background"],
   ["warn-fg", "warn"],
 ];
 
@@ -35,6 +40,17 @@ const TEXT_PAIRS: ReadonlyArray<[fg: string, bg: string]> = [
 const NON_TEXT_PAIRS: ReadonlyArray<[mark: string, bg: string]> = [
   ["accent", "muted"],
   ["accent", "surface-2"],
+  // スイッチのオフ、スライダーのつまみの縁(T6)
+  ["input", "surface"],
+  ["input", "card"],
+  ["primary", "card"],
+  ["primary", "muted"],
+  // スイッチのつまみ(オフの時)
+  ["foreground", "input"],
+  // シミュレーターのグラフの3本の線(AC-005-07)
+  ["accent", "card"],
+  ["warn", "card"],
+  ["fg", "card"],
 ];
 
 /** 半透明の背景(背景の色 / 不透明度)の上の文字。ヘッダーの市場の状態の表示で使う。 */
