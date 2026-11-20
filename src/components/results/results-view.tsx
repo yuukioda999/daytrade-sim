@@ -9,6 +9,7 @@ import { formatSignedJpy, formatSignedRatio } from "@/components/dashboard/dashb
 import { formatDateJa, formatEasternDateTime, formatJpy } from "@/components/settings/format";
 import { cn } from "@/components/ui/cn";
 import { useRemoveChartLayersFromTabOrder } from "@/components/ui/use-chart-tab-order";
+import { pnlAxis } from "./results-model";
 
 type LoadState = { status: "loading" } | { status: "error" } | { status: "ready"; view: View };
 
@@ -149,12 +150,14 @@ function DailyChart({ rows, idPrefix }: { rows: ResultRow[]; idPrefix: string })
   const plus = rows.filter((r) => tone(r.pnlJpy) === "up").length;
   const minus = rows.filter((r) => tone(r.pnlJpy) === "down").length;
   const data = rows.map((r) => ({ date: shortDate(r.date), pnl: r.pnlJpy }));
+  const axis = pnlAxis(rows.map((r) => r.pnlJpy));
   return (
     <figure className={cn(card, "m-0")}>
       <h3 className="text-[15px] font-semibold">日ごとの損益</h3>
       <div ref={ref} className="mt-3 h-[220px]" data-testid={`${idPrefix}-chart`} aria-hidden="true">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+          {/* 絵は読み上げから外しているので、キーボードで止まる先も作らない(axe の aria-hidden-focus、T12) */}
+          <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }} accessibilityLayer={false}>
             <CartesianGrid stroke="var(--color-muted)" vertical={false} />
             <XAxis dataKey="date" tick={AXIS_TICK} stroke="var(--color-border)" interval="preserveStartEnd" minTickGap={16} />
             <YAxis
@@ -162,7 +165,8 @@ function DailyChart({ rows, idPrefix }: { rows: ResultRow[]; idPrefix: string })
               stroke="var(--color-border)"
               width={56}
               // 0円を必ず入れる(1日だけの時も、棒が0円から上か下に伸びて見えるように。AC-004-06)
-              domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
+              domain={axis.domain}
+              ticks={axis.ticks}
               tickFormatter={(v: number) => `${Math.round(v)}円`}
             />
             <ReferenceLine y={0} stroke="var(--color-input)" />
