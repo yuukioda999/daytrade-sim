@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Placeholder } from "@/components/layout/placeholder";
+import { SimulatorView } from "@/components/simulator/simulator-view";
 
 export const metadata: Metadata = { title: "シミュレーター" };
 
 export default function Page() {
-  return <Placeholder title="シミュレーター" />;
+  return <SimulatorView />;
 }

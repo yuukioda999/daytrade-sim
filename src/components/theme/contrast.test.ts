@@ -45,6 +45,12 @@ const NON_TEXT_PAIRS: ReadonlyArray<[mark: string, bg: string]> = [
   ["input", "card"],
   ["primary", "card"],
   ["primary", "muted"],
+  // スイッチのつまみ(オフの時)
+  ["foreground", "input"],
+  // シミュレーターのグラフの3本の線(AC-005-07)
+  ["accent", "card"],
+  ["warn", "card"],
+  ["fg", "card"],
 ];
 
 /** 半透明の背景(背景の色 / 不透明度)の上の文字。ヘッダーの市場の状態の表示で使う。 */
