@@ -34,6 +34,9 @@ const TEXT_PAIRS: ReadonlyArray<[fg: string, bg: string]> = [
   ["muted-foreground", "card"],
   ["foreground", "background"],
   ["warn-fg", "warn"],
+  // 読み込めなかった時の文字(ページの背景の上)。ダッシュボード(T10)
+  ["down", "bg"],
+  ["fg-sub", "surface-2"],
 ];
 
 /** 文字ではない目印(今いる画面の下線など)と、その背景。WCAG の 3:1 で確かめる。 */
@@ -53,6 +56,13 @@ const NON_TEXT_PAIRS: ReadonlyArray<[mark: string, bg: string]> = [
   ["fg", "card"],
   // 設定の画面の入力欄の枠(T7)
   ["input", "surface-2"],
+  // ダッシュボード(T10): 選んだ銘柄と買いサインのカードの枠(ページの背景の上)、損失の上限の帯(muted の上)
+  ["accent", "bg"],
+  ["up", "bg"],
+  ["down", "bg"],
+  ["warn", "bg"],
+  ["warn", "muted"],
+  ["down", "muted"],
 ];
 
 /** 半透明の背景(背景の色 / 不透明度)の上の文字。ヘッダーの市場の状態の表示で使う。 */
@@ -62,6 +72,10 @@ const TINTED_PAIRS: ReadonlyArray<[fg: string, tint: string, alpha: number, base
   // 設定の画面の「設定済み」と、自動売買が止まっている理由の欄(T7)
   ["up", "up", 0.15, "surface"],
   ["fg", "warn", 0.15, "surface"],
+  // ダッシュボードと記録の画面(T10): 状態の札、損失の上限の警告、読み直せなかった時の表示
+  ["accent-soft", "accent", 0.15, "surface"],
+  ["fg", "down", 0.15, "bg"],
+  ["fg", "warn", 0.15, "bg"],
 ];
 
 describe("テーマの色", () => {

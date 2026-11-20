@@ -1,6 +1,6 @@
 import "server-only";
 import type { MarketDataSource, Repositories } from "@/application/ports";
-import { createMarketDataSource } from "./market-data-factory";
+import { createMarketDataSource, fixedNowFromEnv } from "./market-data-factory";
 import { DEFAULT_DB_PATH, openDatabase } from "./db/database";
 import { sqliteRepositories } from "./db/sqlite-repositories";
 
@@ -20,4 +20,9 @@ export function getRepositories(): Repositories {
 export function getMarketDataSource(): MarketDataSource {
   if (!globalForDb.daytradeMarketData) globalForDb.daytradeMarketData = createMarketDataSource();
   return globalForDb.daytradeMarketData;
+}
+
+/** 今の時刻。画面のテストの時だけ止まった時計を使う(market-data-factory.ts の fixedNowFromEnv) */
+export function now(): Date {
+  return fixedNowFromEnv() ?? new Date();
 }
