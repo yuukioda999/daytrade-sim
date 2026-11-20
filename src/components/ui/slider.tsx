@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { cn } from "cn"
+import { cn } from "@/components/ui/cn"
 import { Slider as SliderPrimitive } from "radix-ui"
 
 function Slider({
@@ -10,8 +10,12 @@ function Slider({
   value,
   min = 0,
   max = 100,
+  thumbProps,
   ...props
-}: React.ComponentProps<typeof SliderPrimitive.Root>) {
+}: React.ComponentProps<typeof SliderPrimitive.Root> & {
+  /** 読み上げ用の名前(aria-labelledby)や値の言葉(aria-valuetext)をつまみに付ける。shadcn の元の部品から足した */
+  thumbProps?: React.ComponentProps<typeof SliderPrimitive.Thumb>
+}) {
   const _values = React.useMemo(
     () =>
       Array.isArray(value)
@@ -52,6 +56,7 @@ function Slider({
         <SliderPrimitive.Thumb
           data-slot="slider-thumb"
           key={index}
+          {...thumbProps}
           className="block size-4 shrink-0 rounded-full border border-primary bg-white shadow-sm ring-ring/50 transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
         />
       ))}
