@@ -1,8 +1,28 @@
-import { and, asc, between, eq, sql } from "drizzle-orm";
-import type { BarRepository, CredentialsRepository, Repositories, SettingsRepository, SymbolBar } from "@/application/ports";
+import { and, asc, between, desc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
+import type {
+  BarRepository,
+  CredentialsRepository,
+  DayRun,
+  Repositories,
+  SettingsRepository,
+  SymbolBar,
+  TradeRecord,
+  TradingRepository,
+  WorkerStatus,
+} from "@/application/ports";
 import type { CredentialsInput, MoneySettings } from "@/domain/settings/settings";
 import type { Db } from "./database";
-import { alpacaCredentials, appSettings, bars, fetchedDays, moneySettings } from "./schema";
+import {
+  alpacaCredentials,
+  appSettings,
+  autoTradingChanges,
+  bars,
+  dayRuns,
+  fetchedDays,
+  moneySettings,
+  trades,
+  workerStatus,
+} from "./schema";
 
 const SINGLE_ROW_ID = 1;
 
@@ -18,12 +38,31 @@ export class SqliteSettingsRepository implements SettingsRepository {
   }
 
   setAutoTradingEnabled(enabled: boolean): void {
-    const updatedAt = this.now().toISOString();
-    this.db
-      .insert(appSettings)
-      .values({ id: SINGLE_ROW_ID, autoTradingEnabled: enabled, updatedAt })
-      .onConflictDoUpdate({ target: appSettings.id, set: { autoTradingEnabled: enabled, updatedAt } })
-      .run();
+    // 同じ値を保存し直した時は、変えた時刻の履歴を書かない(履歴は必ず ON と OFF が入れ替わる。T9 のレビュー 6)
+    const changed = (this.getAutoTradingEnabled() ?? true) !== enabled;
+    const now = this.now();
+    const updatedAt = now.toISOString();
+    this.db.transaction((tx) => {
+      tx.insert(appSettings)
+        .values({ id: SINGLE_ROW_ID, autoTradingEnabled: enabled, updatedAt })
+        .onConflictDoUpdate({ target: appSettings.id, set: { autoTradingEnabled: enabled, updatedAt } })
+        .run();
+      // 変えた時刻の履歴(同じミリ秒に2回変えたら後の値)
+      if (!changed) return;
+      tx.insert(autoTradingChanges)
+        .values({ atMs: now.getTime(), enabled })
+        .onConflictDoUpdate({ target: autoTradingChanges.atMs, set: { enabled } })
+        .run();
+    });
+  }
+
+  listAutoTradingChanges(): { at: Date; enabled: boolean }[] {
+    return this.db
+      .select()
+      .from(autoTradingChanges)
+      .orderBy(asc(autoTradingChanges.atMs))
+      .all()
+      .map((r) => ({ at: new Date(r.atMs), enabled: r.enabled }));
   }
 
   listMoneySettings(): MoneySettings[] {
@@ -99,6 +138,7 @@ export class SqliteBarRepository implements BarRepository {
             close: b.close,
             volume: b.volume,
             vwap: b.vwap ?? null,
+            receivedAtMs: b.receivedAt?.getTime() ?? null,
           })
           .onConflictDoNothing()
           .run();
@@ -125,6 +165,38 @@ export class SqliteBarRepository implements BarRepository {
       .orderBy(asc(fetchedDays.date))
       .all()
       .map((r) => r.date);
+  }
+
+  barsBetween(symbol: string, start: Date, end: Date): SymbolBar[] {
+    return this.db
+      .select()
+      .from(bars)
+      .where(and(eq(bars.symbol, symbol), gte(bars.startMs, start.getTime()), lt(bars.startMs, end.getTime())))
+      .orderBy(asc(bars.startMs))
+      .all()
+      .map((r) => ({
+        symbol: r.symbol,
+        start: new Date(r.startMs),
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close,
+        volume: r.volume,
+        vwap: r.vwap ?? undefined,
+        receivedAt: r.receivedAtMs === null ? undefined : new Date(r.receivedAtMs),
+      }));
+  }
+
+  fetchedDatesBefore(symbol: string, date: string, limit: number): string[] {
+    return this.db
+      .select({ date: fetchedDays.date })
+      .from(fetchedDays)
+      .where(and(eq(fetchedDays.symbol, symbol), lt(fetchedDays.date, date)))
+      .orderBy(desc(fetchedDays.date))
+      .limit(limit)
+      .all()
+      .map((r) => r.date)
+      .reverse();
   }
 
   summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[] {
@@ -157,10 +229,137 @@ export class SqliteBarRepository implements BarRepository {
   }
 }
 
-export function sqliteRepositories(db: Db): Repositories {
+export class SqliteTradingRepository implements TradingRepository {
+  constructor(
+    private readonly db: Db,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  getDayRun(date: string): DayRun | null {
+    const r = this.db.select().from(dayRuns).where(eq(dayRuns.date, date)).get();
+    return r ? toDayRun(r) : null;
+  }
+
+  putDayRun(run: DayRun): void {
+    const values = {
+      date: run.date,
+      principalJpy: run.principalJpy,
+      fxRateX100: run.fxRateX100,
+      startingRealizedJpy: run.startingRealizedJpy,
+      baselineDatesJson: JSON.stringify(run.baselineDates),
+      closed: run.closed,
+      startedAt: run.startedAt.toISOString(),
+      updatedAt: this.now().toISOString(),
+    };
+    this.db.insert(dayRuns).values(values).onConflictDoUpdate({ target: dayRuns.date, set: values }).run();
+  }
+
+  listDayRuns(): DayRun[] {
+    return this.db.select().from(dayRuns).orderBy(asc(dayRuns.date)).all().map(toDayRun);
+  }
+
+  replaceDayTrades(date: string, records: readonly TradeRecord[]): void {
+    this.db.transaction((tx) => {
+      tx.delete(trades).where(eq(trades.date, date)).run();
+      for (const r of records) {
+        tx.insert(trades)
+          .values({
+            date: r.date,
+            symbol: r.symbol,
+            signalBarStartMs: r.signalBarStart.getTime(),
+            entryTimeMs: r.entryTime.getTime(),
+            entryPrice: r.entryPrice,
+            shares: r.shares,
+            stopPrice: r.stopPrice,
+            exitTimeMs: r.exit?.time.getTime() ?? null,
+            exitPrice: r.exit?.price ?? null,
+            reason: r.exit?.reason ?? null,
+            pnlJpy: r.exit?.pnlJpy ?? null,
+            late: r.late,
+          })
+          .run();
+      }
+    });
+  }
+
+  listTrades(date: string): TradeRecord[] {
+    return this.db
+      .select()
+      .from(trades)
+      .where(eq(trades.date, date))
+      .orderBy(asc(trades.entryTimeMs), asc(trades.id))
+      .all()
+      .map((r) => ({
+        date: r.date,
+        symbol: r.symbol,
+        signalBarStart: new Date(r.signalBarStartMs),
+        entryTime: new Date(r.entryTimeMs),
+        entryPrice: r.entryPrice,
+        shares: r.shares,
+        stopPrice: r.stopPrice,
+        exit:
+          r.exitTimeMs === null || r.exitPrice === null || r.reason === null || r.pnlJpy === null
+            ? null
+            : {
+                time: new Date(r.exitTimeMs),
+                price: r.exitPrice,
+                reason: r.reason as "stop" | "trailing" | "close",
+                pnlJpy: r.pnlJpy,
+              },
+        late: r.late,
+      }));
+  }
+
+  realizedBefore(date: string): number {
+    const r = this.db
+      .select({ total: sql<number | null>`sum(${trades.pnlJpy})` })
+      .from(trades)
+      .where(and(lt(trades.date, date), isNotNull(trades.pnlJpy)))
+      .get();
+    return r?.total ?? 0;
+  }
+
+  getWorkerStatus(): WorkerStatus | null {
+    const r = this.db.select().from(workerStatus).where(eq(workerStatus.id, SINGLE_ROW_ID)).get();
+    return r
+      ? {
+          heartbeatAt: new Date(r.heartbeatAt),
+          lastBarReceivedAt: r.lastBarReceivedAt ? new Date(r.lastBarReceivedAt) : null,
+          state: r.state as WorkerStatus["state"],
+          message: r.message,
+        }
+      : null;
+  }
+
+  putWorkerStatus(status: WorkerStatus): void {
+    const values = {
+      id: SINGLE_ROW_ID,
+      heartbeatAt: status.heartbeatAt.toISOString(),
+      lastBarReceivedAt: status.lastBarReceivedAt?.toISOString() ?? null,
+      state: status.state,
+      message: status.message,
+    };
+    this.db.insert(workerStatus).values(values).onConflictDoUpdate({ target: workerStatus.id, set: values }).run();
+  }
+}
+
+function toDayRun(r: typeof dayRuns.$inferSelect): DayRun {
   return {
-    settings: new SqliteSettingsRepository(db),
-    credentials: new SqliteCredentialsRepository(db),
-    bars: new SqliteBarRepository(db),
+    date: r.date,
+    principalJpy: r.principalJpy,
+    fxRateX100: r.fxRateX100,
+    startingRealizedJpy: r.startingRealizedJpy,
+    baselineDates: JSON.parse(r.baselineDatesJson) as Record<string, string[]>,
+    closed: r.closed,
+    startedAt: new Date(r.startedAt),
+  };
+}
+
+export function sqliteRepositories(db: Db, now: () => Date = () => new Date()): Repositories {
+  return {
+    settings: new SqliteSettingsRepository(db, now),
+    credentials: new SqliteCredentialsRepository(db, now),
+    bars: new SqliteBarRepository(db, now),
+    trading: new SqliteTradingRepository(db, now),
   };
 }

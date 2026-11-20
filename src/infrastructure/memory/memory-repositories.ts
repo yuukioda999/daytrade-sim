@@ -1,16 +1,34 @@
-import type { BarRepository, CredentialsRepository, Repositories, SettingsRepository, SymbolBar } from "@/application/ports";
+import type {
+  BarRepository,
+  CredentialsRepository,
+  DayRun,
+  Repositories,
+  SettingsRepository,
+  SymbolBar,
+  TradeRecord,
+  TradingRepository,
+  WorkerStatus,
+} from "@/application/ports";
 import type { CredentialsInput, MoneySettings } from "@/domain/settings/settings";
 
 /** テスト用の、メモリに保存する実装 */
 export class MemorySettingsRepository implements SettingsRepository {
   private autoTrading: boolean | null = null;
   private money = new Map<string, MoneySettings>();
+  private changes = new Map<number, boolean>();
+
+  constructor(private readonly now: () => Date = () => new Date()) {}
 
   getAutoTradingEnabled(): boolean | null {
     return this.autoTrading;
   }
   setAutoTradingEnabled(enabled: boolean): void {
+    const changed = (this.autoTrading ?? true) !== enabled;
     this.autoTrading = enabled;
+    if (changed) this.changes.set(this.now().getTime(), enabled);
+  }
+  listAutoTradingChanges(): { at: Date; enabled: boolean }[] {
+    return [...this.changes.entries()].sort(([a], [b]) => a - b).map(([at, enabled]) => ({ at: new Date(at), enabled }));
   }
   listMoneySettings(): MoneySettings[] {
     return [...this.money.values()].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
@@ -56,6 +74,18 @@ export class MemoryBarRepository implements BarRepository {
   fetchedDates(symbol: string, from: string, to: string): string[] {
     return [...(this.fetched.get(symbol) ?? [])].filter((d) => d >= from && d <= to).sort();
   }
+  barsBetween(symbol: string, start: Date, end: Date): SymbolBar[] {
+    return [...this.bars.values()]
+      .filter((b) => b.symbol === symbol && b.start >= start && b.start < end)
+      .sort((a, b) => a.start.getTime() - b.start.getTime())
+      .map((b) => ({ ...b }));
+  }
+  fetchedDatesBefore(symbol: string, date: string, limit: number): string[] {
+    return [...(this.fetched.get(symbol) ?? [])]
+      .filter((d) => d < date)
+      .sort()
+      .slice(-limit);
+  }
   summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[] {
     const symbols = [...new Set([...[...this.bars.values()].map((b) => b.symbol), ...this.fetched.keys()])].sort();
     return symbols.map((symbol) => {
@@ -71,10 +101,47 @@ export class MemoryBarRepository implements BarRepository {
   }
 }
 
-export function memoryRepositories(): Repositories {
+export class MemoryTradingRepository implements TradingRepository {
+  private runs = new Map<string, DayRun>();
+  private trades = new Map<string, TradeRecord[]>();
+  private status: WorkerStatus | null = null;
+
+  getDayRun(date: string): DayRun | null {
+    const r = this.runs.get(date);
+    return r ? { ...r } : null;
+  }
+  putDayRun(run: DayRun): void {
+    this.runs.set(run.date, { ...run });
+  }
+  listDayRuns(): DayRun[] {
+    return [...this.runs.values()].sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ ...r }));
+  }
+  replaceDayTrades(date: string, records: readonly TradeRecord[]): void {
+    this.trades.set(date, records.map((r) => ({ ...r })));
+  }
+  listTrades(date: string): TradeRecord[] {
+    return (this.trades.get(date) ?? []).map((r) => ({ ...r }));
+  }
+  realizedBefore(date: string): number {
+    let total = 0;
+    for (const [d, list] of this.trades) {
+      if (d < date) for (const r of list) total += r.exit?.pnlJpy ?? 0;
+    }
+    return total;
+  }
+  getWorkerStatus(): WorkerStatus | null {
+    return this.status ? { ...this.status } : null;
+  }
+  putWorkerStatus(status: WorkerStatus): void {
+    this.status = { ...status };
+  }
+}
+
+export function memoryRepositories(now: () => Date = () => new Date()): Repositories {
   return {
-    settings: new MemorySettingsRepository(),
+    settings: new MemorySettingsRepository(now),
     credentials: new MemoryCredentialsRepository(),
     bars: new MemoryBarRepository(),
+    trading: new MemoryTradingRepository(),
   };
 }

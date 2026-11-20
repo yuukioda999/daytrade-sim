@@ -41,6 +41,8 @@ export const bars = sqliteTable(
     close: real("close").notNull(),
     volume: real("volume").notNull(),
     vwap: real("vwap"),
+    /** 自動売買のプロセスが受け取った時刻(UTC ミリ秒)。過去データの取得で取った足は null(ADR-0009) */
+    receivedAtMs: integer("received_at_ms"),
   },
   (t) => [primaryKey({ columns: [t.symbol, t.startMs] })],
 );
@@ -55,3 +57,54 @@ export const fetchedDays = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.symbol, t.date] })],
 );
+
+/** 自動売買の ON / OFF を変えた時刻の履歴(ADR-0009、SPEC-006 AC-006-01) */
+export const autoTradingChanges = sqliteTable("auto_trading_changes", {
+  atMs: integer("at_ms").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull(),
+});
+
+/** 自動売買のプロセスが動いた取引日(SPEC-004 の「記録のある日」)。その日の元手、為替、始めの損益 */
+export const dayRuns = sqliteTable("day_runs", {
+  date: text("date").primaryKey(),
+  principalJpy: integer("principal_jpy").notNull(),
+  fxRateX100: integer("fx_rate_x100").notNull(),
+  /** その日より前の損益の合計(円) */
+  startingRealizedJpy: real("starting_realized_jpy").notNull(),
+  /** その日の取引量の基準に使う過去の取引日(銘柄ごと。日を始めた時に決めて変えない。JSON) */
+  baselineDatesJson: text("baseline_dates_json").notNull().default("{}"),
+  /** その日を締めたか(SPEC-003 定義 14) */
+  closed: integer("closed", { mode: "boolean" }).notNull(),
+  startedAt: text("started_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/**
+ * 練習売買の記録(SPEC-003)。その日の記録は、作り直すたびに置き換える(ADR-0009)。
+ * 売っていない株は exit の列が null
+ */
+export const trades = sqliteTable("trades", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull(),
+  symbol: text("symbol").notNull(),
+  signalBarStartMs: integer("signal_bar_start_ms").notNull(),
+  entryTimeMs: integer("entry_time_ms").notNull(),
+  entryPrice: real("entry_price").notNull(),
+  shares: real("shares").notNull(),
+  stopPrice: real("stop_price").notNull(),
+  exitTimeMs: integer("exit_time_ms"),
+  exitPrice: real("exit_price"),
+  reason: text("reason"),
+  pnlJpy: real("pnl_jpy"),
+  /** あとから処理した記録(SPEC-003 定義 11) */
+  late: integer("late", { mode: "boolean" }).notNull(),
+});
+
+/** 自動売買のプロセスの様子(1行だけ。画面の AC-007-08、09、10 で使う) */
+export const workerStatus = sqliteTable("worker_status", {
+  id: integer("id").primaryKey(),
+  heartbeatAt: text("heartbeat_at").notNull(),
+  lastBarReceivedAt: text("last_bar_received_at"),
+  state: text("state").notNull(),
+  message: text("message").notNull(),
+});

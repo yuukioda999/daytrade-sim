@@ -1,0 +1,1 @@
+ALTER TABLE `day_runs` ADD `baseline_dates_json` text DEFAULT '{}' NOT NULL;

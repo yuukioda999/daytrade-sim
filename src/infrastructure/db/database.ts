@@ -17,6 +17,10 @@ const MIGRATIONS_FOLDER = path.join(process.cwd(), "drizzle");
  */
 export function openDatabase(file: string = DEFAULT_DB_PATH): Db {
   const onDisk = file !== ":memory:";
+  // リポジトリの外から起動すると、マイグレーションがなく、関係ないフォルダに DB を作ってしまう。作る前に止める(T9 のセキュリティレビュー 2)
+  if (!existsSync(path.join(MIGRATIONS_FOLDER, "meta", "_journal.json"))) {
+    throw new Error("マイグレーション(drizzle/)が見つかりません。リポジトリのフォルダで起動してください");
+  }
   // 接続用キーを平文で保存するので、フォルダとファイルは自分だけが読める権限にする(T7 のセキュリティレビュー)
   if (onDisk) mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const sqlite = new Database(file);

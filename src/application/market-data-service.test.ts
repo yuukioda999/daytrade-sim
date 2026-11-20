@@ -51,7 +51,7 @@ describe("AC-006-09: 期間を選んで4銘柄の足を取り、保存する", (
     // 2日 × 78本。時間外の足(前後1本ずつ)は捨てる
     expect(r).toEqual({ ok: true, received: 156, saved: 156 });
     expect(repos.bars.fetchedDates("SOXL", "2026-11-01", "2026-11-30")).toEqual(["2026-11-02", "2026-11-03"]);
-    const stored = [...(repos.bars as MemoryBarRepository).bars.values()];
+    const stored = [...(repos.bars as unknown as MemoryBarRepository).bars.values()];
     expect(stored.every((b) => b.symbol === "SOXL")).toBe(true);
     expect(stored.map((b) => b.start.toISOString()).sort()[0]).toBe("2026-11-02T14:30:00.000Z");
   });
@@ -83,7 +83,7 @@ describe("取得元が返した足の確かめ", () => {
     });
     const r = await importChunk(repos, source, { symbol: "SOXL", from: "2026-11-02", to: "2026-11-02" }, NOW);
     expect(r).toEqual({ ok: true, received: 78, saved: 78 });
-    expect([...(repos.bars as MemoryBarRepository).bars.values()].every((b) => b.symbol === "SOXL")).toBe(true);
+    expect([...(repos.bars as unknown as MemoryBarRepository).bars.values()].every((b) => b.symbol === "SOXL")).toBe(true);
   });
 
   it("夏時間が始まる日(2026-03-09 の週)をまたぐ1回分でも、各日 78本(9:30 から 15:55)", async () => {
@@ -91,7 +91,7 @@ describe("取得元が返した足の確かめ", () => {
     const r = await importChunk(repos, new FakeMarketData(), { symbol: "SOXL", from: "2026-03-06", to: "2026-03-09" }, NOW);
     // 3/6(金、冬時間)と 3/9(月、夏時間)
     expect(r).toEqual({ ok: true, received: 156, saved: 156 });
-    const starts = [...(repos.bars as MemoryBarRepository).bars.values()].map((b) => b.start.toISOString()).sort();
+    const starts = [...(repos.bars as unknown as MemoryBarRepository).bars.values()].map((b) => b.start.toISOString()).sort();
     expect(starts[0]).toBe("2026-03-06T14:30:00.000Z");
     expect(starts[78]).toBe("2026-03-09T13:30:00.000Z");
   });
@@ -131,7 +131,7 @@ describe("AC-006-10: 重なる期間を取っても、同じ足を二重に保�
     await importChunk(repos, new FakeMarketData(), chunk, NOW);
     const again = await importChunk(repos, new FakeMarketData(), { ...chunk, to: "2026-11-04" }, NOW);
     expect(again).toEqual({ ok: true, received: 234, saved: 78 });
-    expect((repos.bars as MemoryBarRepository).bars.size).toBe(234);
+    expect((repos.bars as unknown as MemoryBarRepository).bars.size).toBe(234);
   });
 });
 
