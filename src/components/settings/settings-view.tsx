@@ -5,7 +5,8 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/components/ui/cn";
 import type { MoneyErrors, MoneyView, SettingsView as View } from "@/application/settings-service";
 import type { CredentialsErrors } from "@/domain/settings/settings";
-import { formatDateJa, formatFxRate, formatJpy } from "./format";
+import { formatDateJa, formatEasternDateTime, formatFxRate, formatJpy } from "./format";
+import { HistoricalSection } from "./historical-section";
 
 type LoadState = { status: "loading" } | { status: "error" } | { status: "ready"; view: View };
 
@@ -45,6 +46,7 @@ export function SettingsView() {
         <>
           <AutoTradingSection view={state.view} onChange={(view) => setState({ status: "ready", view })} />
           <CredentialsSection view={state.view} onChange={(view) => setState({ status: "ready", view })} />
+          <HistoricalSection configured={state.view.credentials.configured} />
           <MoneySection view={state.view} onChange={(view) => setState({ status: "ready", view })} />
         </>
       )}
@@ -213,6 +215,37 @@ function CredentialsSection({ view, onChange }: SectionProps) {
     }
   };
 
+  const [checking, setChecking] = useState(false);
+  const [check, setCheck] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  const checkConnection = async () => {
+    setCheck(null);
+    setChecking(true);
+    try {
+      const res = await fetch("/api/settings/connection-check", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const data = (await res.json()) as
+        | { ok: true; symbol: string; barStart: string; close: number }
+        | { ok: false; message: string };
+      if (!res.ok) throw new Error();
+      setCheck(
+        data.ok
+          ? {
+              kind: "ok",
+              text: `接続できました。${data.symbol} の最新の5分足: ${formatEasternDateTime(data.barStart)}(米国東部時間)、終値 $${data.close.toFixed(2)}`,
+            }
+          : { kind: "error", text: data.message },
+      );
+    } catch {
+      setCheck({ kind: "error", text: "接続を確かめられませんでした" });
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const remove = async () => {
     setMessage(null);
     setBusy(true);
@@ -282,12 +315,22 @@ function CredentialsSection({ view, onChange }: SectionProps) {
             {configured ? "キーを置き換えて保存" : "キーを保存"}
           </button>
           {configured && (
+            <button type="button" disabled={busy || checking} onClick={checkConnection} className={secondaryButtonClass}>
+              {checking ? "確かめています" : "接続を確かめる"}
+            </button>
+          )}
+          {configured && (
             <button type="button" disabled={busy} onClick={remove} className={secondaryButtonClass}>
               キーを削除
             </button>
           )}
         </div>
       </form>
+      {configured && (
+        <div data-testid="connection-check-result">
+          <Message message={check} />
+        </div>
+      )}
       <p className="text-xs text-fg-muted">
         キーはこのパソコンの中(data フォルダ)にだけ保存し、画面にはキー ID の末尾4文字だけを出します。シークレットは画面に出しません。
       </p>

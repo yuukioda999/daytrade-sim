@@ -43,7 +43,14 @@ export default defineConfig({
     // 設定のテストが本物のキーを消してしまう(T7 のレビュー)
     reuseExistingServer: false,
     // 画面のテストは、本番の data/ とは別の DB ファイルを使う。サーバーを立ち上げる時に消して、空の DB から始める
-    env: { DAYTRADE_DB_PATH: E2E_DB_PATH },
+    // 市場データは通信しないテスト用の取得元を使う(SPEC-006 の確かめ方)。
+    // TSLL の 2026年10月の取得は1回目だけ失敗させ、取り直し(AC-006-11)を確かめる
+    env: {
+      DAYTRADE_DB_PATH: E2E_DB_PATH,
+      DAYTRADE_FAKE_MARKET_DATA: "1",
+      DAYTRADE_FAKE_FAIL_ONCE: "TSLL|2026-10",
+      DAYTRADE_FAKE_DELAY_MS: "300",
+    },
     timeout: 180_000,
   },
 });

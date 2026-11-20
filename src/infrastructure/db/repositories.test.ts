@@ -33,6 +33,45 @@ describe.each(IMPLEMENTATIONS)("%s の保存先", (_, create) => {
     ]);
   });
 
+  it("AC-006-10: 同じ銘柄の同じ時刻の足は二重に保存しない。新しく保存した本数を返す", () => {
+    const { bars } = create();
+    const bar = (symbol: string, iso: string, close: number) => ({
+      symbol,
+      start: new Date(iso),
+      open: 1,
+      high: 2,
+      low: 0.5,
+      close,
+      volume: 100,
+      vwap: 1.2,
+    });
+    expect(bars.saveBars([bar("SOXL", "2026-11-02T14:30:00Z", 1), bar("SOXL", "2026-11-02T14:35:00Z", 1)])).toBe(2);
+    // 重なる期間を取り直しても、新しい足だけが増える(同じ時刻の足は前に保存したものを残す)
+    expect(
+      bars.saveBars([
+        bar("SOXL", "2026-11-02T14:35:00Z", 9),
+        bar("SOXL", "2026-11-02T14:40:00Z", 1),
+        bar("TQQQ", "2026-11-02T14:35:00Z", 1),
+      ]),
+    ).toBe(2);
+    expect(bars.summary()).toEqual([
+      { symbol: "SOXL", barCount: 3, firstDate: null, lastDate: null },
+      { symbol: "TQQQ", barCount: 1, firstDate: null, lastDate: null },
+    ]);
+  });
+
+  it("取り終えた日を記録し、期間で読み出せる。同じ日を2回記録しても1回分", () => {
+    const { bars } = create();
+    bars.markFetched("SOXL", ["2026-11-02", "2026-11-03"]);
+    bars.markFetched("SOXL", ["2026-11-03", "2026-11-04"]);
+    bars.markFetched("TQQQ", ["2026-11-02"]);
+    expect(bars.fetchedDates("SOXL", "2026-11-03", "2026-11-30")).toEqual(["2026-11-03", "2026-11-04"]);
+    expect(bars.summary()).toEqual([
+      { symbol: "SOXL", barCount: 0, firstDate: "2026-11-02", lastDate: "2026-11-04" },
+      { symbol: "TQQQ", barCount: 0, firstDate: "2026-11-02", lastDate: "2026-11-02" },
+    ]);
+  });
+
   it("接続用キーを保存、上書き、削除できる", () => {
     const { credentials } = create();
     expect(credentials.get()).toBeNull();

@@ -21,3 +21,16 @@ export function formatDateJa(date: string): string {
   const weekday = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay();
   return `${Number(m[2])}月${Number(m[3])}日(${WEEKDAYS[weekday]})`;
 }
+
+const easternDateTime = new Intl.DateTimeFormat("ja-JP", {
+  timeZone: "America/New_York",
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** 時刻を米国東部時間の「11/20 11:40」の形にする */
+export function formatEasternDateTime(iso: string): string {
+  return easternDateTime.format(new Date(iso));
+}
