@@ -56,6 +56,18 @@ test.describe("成績の画面", () => {
     await expect(page.getByText("41日分の日ごとの損益。プラスの日(上向きの緑)が0日、マイナスの日(下向きの赤)が1日")).toBeVisible();
   });
 
+  test("AC-007-05: 読み上げから外したグラフの中に、キーボードで止まる先がない", async ({ page }) => {
+    await open(page, "/results");
+    await expect(page.getByTestId("backtest-chart").locator("svg")).toBeVisible();
+    for (const id of ["live-chart", "backtest-chart"]) {
+      const stops = await page
+        .getByTestId(id)
+        .locator("[tabindex]")
+        .evaluateAll((els) => els.filter((e) => Number(e.getAttribute("tabindex")) >= 0).length);
+      expect(stops).toBe(0);
+    }
+  });
+
   test("AC-004-02: 記録が0日なら「まだ記録がありません」と出す", async ({ page }) => {
     await page.route("**/api/results", (route) => route.fulfill({ json: { live: null, backtest: null } }));
     await open(page, "/results");
