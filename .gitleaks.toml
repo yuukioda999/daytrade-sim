@@ -1,0 +1,19 @@
+# 秘密の混入検査(gitleaks)の設定。ADR-0006
+# gitleaks の標準の規則に、Alpaca のキー ID の規則を足し、テストのダミーのキーだけを除外する
+title = "daytrade-sim"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "alpaca-key-id"
+description = "Alpaca の接続用キー ID(PK か AK で始まる20文字。長さと先頭は一般的な形で、Alpaca の決まりとしては確かめていない)"
+regex = '''\b[AP]K[A-Z0-9]{18}\b'''
+
+[[allowlists]]
+description = "テストのダミーのキー(本物ではない。0 の並びで作っている)。前後まで固定して、本物に当たらないようにする"
+regexes = [
+  '''^PK(TEST|OTHER)KEY0+[A-Z]{2,4}$''',
+  '''^TestSecret0+(Zq9X)?$''',
+  '''^OtherSecret0+$''',
+]
