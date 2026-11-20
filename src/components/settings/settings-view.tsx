@@ -6,6 +6,7 @@ import { cn } from "@/components/ui/cn";
 import type { MoneyErrors, MoneyView, SettingsView as View } from "@/application/settings-service";
 import type { CredentialsErrors } from "@/domain/settings/settings";
 import { formatDateJa, formatEasternDateTime, formatFxRate, formatJpy } from "./format";
+import { BacktestSection } from "./backtest-section";
 import { HistoricalSection } from "./historical-section";
 
 type LoadState = { status: "loading" } | { status: "error" } | { status: "ready"; view: View };
@@ -47,6 +48,7 @@ export function SettingsView() {
           <AutoTradingSection view={state.view} onChange={(view) => setState({ status: "ready", view })} />
           <CredentialsSection view={state.view} onChange={(view) => setState({ status: "ready", view })} />
           <HistoricalSection configured={state.view.credentials.configured} />
+          <BacktestSection />
           <MoneySection view={state.view} onChange={(view) => setState({ status: "ready", view })} />
         </>
       )}

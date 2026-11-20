@@ -108,3 +108,43 @@ export const workerStatus = sqliteTable("worker_status", {
   state: text("state").notNull(),
   message: text("message").notNull(),
 });
+
+/*
+ * 過去データで試した結果(ADR-0010、SPEC-006 AC-006-12)。毎日ためた記録(day_runs、trades)とは分ける(SPEC-004 AC-004-04)。
+ * 試すたびに、3つの表をまとめて置き換える
+ */
+
+/** 試した時の条件(1行だけ) */
+export const backtestRuns = sqliteTable("backtest_runs", {
+  id: integer("id").primaryKey(),
+  ranAt: text("ran_at").notNull(),
+  principalJpy: integer("principal_jpy").notNull(),
+  fxRateX100: integer("fx_rate_x100").notNull(),
+});
+
+/** 試した日。売買がなかった日も行を作る(SPEC-004) */
+export const backtestDays = sqliteTable("backtest_days", {
+  date: text("date").primaryKey(),
+  /** その日より前の損益の合計(円) */
+  startingRealizedJpy: real("starting_realized_jpy").notNull(),
+  baselineDatesJson: text("baseline_dates_json").notNull(),
+  /** その日の売り終わった分の損益の合計(円) */
+  pnlJpy: real("pnl_jpy").notNull(),
+  limitReached: integer("limit_reached", { mode: "boolean" }).notNull(),
+});
+
+/** 試した練習売買の記録(trades と同じ形。あとから処理の印は付けない) */
+export const backtestTrades = sqliteTable("backtest_trades", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull(),
+  symbol: text("symbol").notNull(),
+  signalBarStartMs: integer("signal_bar_start_ms").notNull(),
+  entryTimeMs: integer("entry_time_ms").notNull(),
+  entryPrice: real("entry_price").notNull(),
+  shares: real("shares").notNull(),
+  stopPrice: real("stop_price").notNull(),
+  exitTimeMs: integer("exit_time_ms"),
+  exitPrice: real("exit_price"),
+  reason: text("reason"),
+  pnlJpy: real("pnl_jpy"),
+});

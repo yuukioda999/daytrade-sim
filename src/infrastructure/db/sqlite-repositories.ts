@@ -1,5 +1,8 @@
 import { and, asc, between, desc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 import type {
+  BacktestDay,
+  BacktestRepository,
+  BacktestRun,
   BarRepository,
   CredentialsRepository,
   DayRun,
@@ -16,6 +19,9 @@ import {
   alpacaCredentials,
   appSettings,
   autoTradingChanges,
+  backtestDays,
+  backtestRuns,
+  backtestTrades,
   bars,
   dayRuns,
   fetchedDays,
@@ -289,25 +295,7 @@ export class SqliteTradingRepository implements TradingRepository {
       .where(eq(trades.date, date))
       .orderBy(asc(trades.entryTimeMs), asc(trades.id))
       .all()
-      .map((r) => ({
-        date: r.date,
-        symbol: r.symbol,
-        signalBarStart: new Date(r.signalBarStartMs),
-        entryTime: new Date(r.entryTimeMs),
-        entryPrice: r.entryPrice,
-        shares: r.shares,
-        stopPrice: r.stopPrice,
-        exit:
-          r.exitTimeMs === null || r.exitPrice === null || r.reason === null || r.pnlJpy === null
-            ? null
-            : {
-                time: new Date(r.exitTimeMs),
-                price: r.exitPrice,
-                reason: r.reason as "stop" | "trailing" | "close",
-                pnlJpy: r.pnlJpy,
-              },
-        late: r.late,
-      }));
+      .map(toTradeRecord);
   }
 
   realizedBefore(date: string): number {
@@ -343,6 +331,109 @@ export class SqliteTradingRepository implements TradingRepository {
   }
 }
 
+export class SqliteBacktestRepository implements BacktestRepository {
+  constructor(private readonly db: Db) {}
+
+  replaceAll(run: BacktestRun, days: readonly BacktestDay[], records: readonly TradeRecord[]): void {
+    this.db.transaction((tx) => {
+      tx.delete(backtestTrades).run();
+      tx.delete(backtestDays).run();
+      tx.delete(backtestRuns).run();
+      tx.insert(backtestRuns)
+        .values({ id: SINGLE_ROW_ID, ranAt: run.ranAt.toISOString(), principalJpy: run.principalJpy, fxRateX100: run.fxRateX100 })
+        .run();
+      for (const d of days) {
+        tx.insert(backtestDays)
+          .values({
+            date: d.date,
+            startingRealizedJpy: d.startingRealizedJpy,
+            baselineDatesJson: JSON.stringify(d.baselineDates),
+            pnlJpy: d.pnlJpy,
+            limitReached: d.limitReached,
+          })
+          .run();
+      }
+      for (const r of records) {
+        tx.insert(backtestTrades)
+          .values({
+            date: r.date,
+            symbol: r.symbol,
+            signalBarStartMs: r.signalBarStart.getTime(),
+            entryTimeMs: r.entryTime.getTime(),
+            entryPrice: r.entryPrice,
+            shares: r.shares,
+            stopPrice: r.stopPrice,
+            exitTimeMs: r.exit?.time.getTime() ?? null,
+            exitPrice: r.exit?.price ?? null,
+            reason: r.exit?.reason ?? null,
+            pnlJpy: r.exit?.pnlJpy ?? null,
+          })
+          .run();
+      }
+    });
+  }
+
+  getRun(): BacktestRun | null {
+    const r = this.db.select().from(backtestRuns).where(eq(backtestRuns.id, SINGLE_ROW_ID)).get();
+    return r ? { ranAt: new Date(r.ranAt), principalJpy: r.principalJpy, fxRateX100: r.fxRateX100 } : null;
+  }
+
+  listDays(): BacktestDay[] {
+    return this.db
+      .select()
+      .from(backtestDays)
+      .orderBy(asc(backtestDays.date))
+      .all()
+      .map((r) => ({
+        date: r.date,
+        startingRealizedJpy: r.startingRealizedJpy,
+        baselineDates: JSON.parse(r.baselineDatesJson) as Record<string, string[]>,
+        pnlJpy: r.pnlJpy,
+        limitReached: r.limitReached,
+      }));
+  }
+
+  listTrades(date: string): TradeRecord[] {
+    return this.db
+      .select()
+      .from(backtestTrades)
+      .where(eq(backtestTrades.date, date))
+      .orderBy(asc(backtestTrades.entryTimeMs), asc(backtestTrades.id))
+      .all()
+      .map((r) => toTradeRecord({ ...r, late: false }));
+  }
+}
+
+function toTradeRecord(r: {
+  date: string;
+  symbol: string;
+  signalBarStartMs: number;
+  entryTimeMs: number;
+  entryPrice: number;
+  shares: number;
+  stopPrice: number;
+  exitTimeMs: number | null;
+  exitPrice: number | null;
+  reason: string | null;
+  pnlJpy: number | null;
+  late: boolean;
+}): TradeRecord {
+  return {
+    date: r.date,
+    symbol: r.symbol,
+    signalBarStart: new Date(r.signalBarStartMs),
+    entryTime: new Date(r.entryTimeMs),
+    entryPrice: r.entryPrice,
+    shares: r.shares,
+    stopPrice: r.stopPrice,
+    exit:
+      r.exitTimeMs === null || r.exitPrice === null || r.reason === null || r.pnlJpy === null
+        ? null
+        : { time: new Date(r.exitTimeMs), price: r.exitPrice, reason: r.reason as "stop" | "trailing" | "close", pnlJpy: r.pnlJpy },
+    late: r.late,
+  };
+}
+
 function toDayRun(r: typeof dayRuns.$inferSelect): DayRun {
   return {
     date: r.date,
@@ -361,5 +452,6 @@ export function sqliteRepositories(db: Db, now: () => Date = () => new Date()): 
     credentials: new SqliteCredentialsRepository(db, now),
     bars: new SqliteBarRepository(db, now),
     trading: new SqliteTradingRepository(db, now),
+    backtest: new SqliteBacktestRepository(db),
   };
 }
