@@ -1,8 +1,8 @@
-import { asc, eq } from "drizzle-orm";
-import type { CredentialsRepository, Repositories, SettingsRepository } from "@/application/ports";
+import { and, asc, between, eq, sql } from "drizzle-orm";
+import type { BarRepository, CredentialsRepository, Repositories, SettingsRepository, SymbolBar } from "@/application/ports";
 import type { CredentialsInput, MoneySettings } from "@/domain/settings/settings";
 import type { Db } from "./database";
-import { alpacaCredentials, appSettings, moneySettings } from "./schema";
+import { alpacaCredentials, appSettings, bars, fetchedDays, moneySettings } from "./schema";
 
 const SINGLE_ROW_ID = 1;
 
@@ -76,6 +76,91 @@ export class SqliteCredentialsRepository implements CredentialsRepository {
   }
 }
 
+export class SqliteBarRepository implements BarRepository {
+  constructor(
+    private readonly db: Db,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  saveBars(list: readonly SymbolBar[]): number {
+    if (list.length === 0) return 0;
+    // 1回の取得分をまとめて1つのトランザクションで保存する。同じ足は保存しない(AC-006-10)
+    return this.db.transaction((tx) => {
+      let inserted = 0;
+      for (const b of list) {
+        const r = tx
+          .insert(bars)
+          .values({
+            symbol: b.symbol,
+            startMs: b.start.getTime(),
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume,
+            vwap: b.vwap ?? null,
+          })
+          .onConflictDoNothing()
+          .run();
+        inserted += r.changes;
+      }
+      return inserted;
+    });
+  }
+
+  markFetched(symbol: string, dates: readonly string[]): void {
+    const fetchedAt = this.now().toISOString();
+    this.db.transaction((tx) => {
+      for (const date of dates) {
+        tx.insert(fetchedDays).values({ symbol, date, fetchedAt }).onConflictDoNothing().run();
+      }
+    });
+  }
+
+  fetchedDates(symbol: string, from: string, to: string): string[] {
+    return this.db
+      .select({ date: fetchedDays.date })
+      .from(fetchedDays)
+      .where(and(eq(fetchedDays.symbol, symbol), between(fetchedDays.date, from, to)))
+      .orderBy(asc(fetchedDays.date))
+      .all()
+      .map((r) => r.date);
+  }
+
+  summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[] {
+    const counts = this.db
+      .select({ symbol: bars.symbol, barCount: sql<number>`count(*)` })
+      .from(bars)
+      .groupBy(bars.symbol)
+      .all();
+    const days = this.db
+      .select({
+        symbol: fetchedDays.symbol,
+        dayCount: sql<number>`count(*)`,
+        firstDate: sql<string>`min(${fetchedDays.date})`,
+        lastDate: sql<string>`max(${fetchedDays.date})`,
+      })
+      .from(fetchedDays)
+      .groupBy(fetchedDays.symbol)
+      .all();
+    const symbols = [...new Set([...counts.map((c) => c.symbol), ...days.map((d) => d.symbol)])].sort();
+    return symbols.map((symbol) => {
+      const d = days.find((x) => x.symbol === symbol);
+      return {
+        symbol,
+        barCount: counts.find((c) => c.symbol === symbol)?.barCount ?? 0,
+        dayCount: d?.dayCount ?? 0,
+        firstDate: d?.firstDate ?? null,
+        lastDate: d?.lastDate ?? null,
+      };
+    });
+  }
+}
+
 export function sqliteRepositories(db: Db): Repositories {
-  return { settings: new SqliteSettingsRepository(db), credentials: new SqliteCredentialsRepository(db) };
+  return {
+    settings: new SqliteSettingsRepository(db),
+    credentials: new SqliteCredentialsRepository(db),
+    bars: new SqliteBarRepository(db),
+  };
 }

@@ -14,10 +14,27 @@ export function formatFxRate(value: number): string {
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
-/** "2026-11-23" を「11月23日(月)」にする。暦日なので時刻帯の変換はしない */
-export function formatDateJa(date: string): string {
+/**
+ * "2026-11-23" を「11月23日(月)」にする。暦日なので時刻帯の変換はしない。
+ * withYear なら「2026年11月23日(月)」(1年の期間で、同じ月が2回出る時に見分けるため)
+ */
+export function formatDateJa(date: string, options: { withYear?: boolean } = {}): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!m) return date;
   const weekday = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay();
-  return `${Number(m[2])}月${Number(m[3])}日(${WEEKDAYS[weekday]})`;
+  const year = options.withYear ? `${Number(m[1])}年` : "";
+  return `${year}${Number(m[2])}月${Number(m[3])}日(${WEEKDAYS[weekday]})`;
+}
+
+const easternDateTime = new Intl.DateTimeFormat("ja-JP", {
+  timeZone: "America/New_York",
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** 時刻を米国東部時間の「11/20 11:40」の形にする */
+export function formatEasternDateTime(iso: string): string {
+  return easternDateTime.format(new Date(iso));
 }

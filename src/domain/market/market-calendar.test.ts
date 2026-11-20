@@ -102,7 +102,7 @@ describe("SPEC-001 市場の時間", () => {
 
   it("AC-001-12: 休場日の表にない年(2030 年)はエラーにする", () => {
     expect(() => isMarketOpen(at("2030-01-07T15:00:00Z"))).toThrow(CalendarOutOfRangeError);
-    expect(() => sessionOn("2025-12-31")).toThrow(CalendarOutOfRangeError);
+    expect(() => sessionOn("2024-12-31")).toThrow(CalendarOutOfRangeError);
   });
 });
 
@@ -115,8 +115,10 @@ describe("休場日の表", () => {
     }
   });
 
-  it("NYSE の表の件数どおり(各年 休場日10日、短縮取引日は 2026 年 2日、2027 年 1日)", () => {
+  it("NYSE の表の件数どおり(2025 年は臨時の1日を含めて11日、2026、2027 年は10日。短縮取引日は 2025 年 3日、2026 年 2日、2027 年 1日)", () => {
     const count = (year: string) => Object.keys(HOLIDAYS).filter((d) => d.startsWith(year)).length;
+    expect(count("2025")).toBe(11);
+    expect(EARLY_CLOSES.filter((d) => d.startsWith("2025"))).toHaveLength(3);
     expect(count("2026")).toBe(10);
     expect(count("2027")).toBe(10);
     expect(EARLY_CLOSES.filter((d) => d.startsWith("2026"))).toHaveLength(2);
@@ -142,6 +144,11 @@ describe("次の取引日(SPEC-006 AC-006-15 の前提)", () => {
     ["2026-11-21", "2026-11-23", "土曜日から"],
   ])("%s の次の取引日は %s(%s)", (date, expected) => {
     expect(nextTradingDate(date)).toBe(expected);
+  });
+
+  it("2025 年の年末から 2026 年へ(12/25 と元日を飛ばす)", () => {
+    expect(nextTradingDate("2025-12-24")).toBe("2025-12-26");
+    expect(nextTradingDate("2025-12-31")).toBe("2026-01-02");
   });
 
   it("休場日の表にない年に入る時はエラー", () => {
