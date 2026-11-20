@@ -56,13 +56,14 @@ export class MemoryBarRepository implements BarRepository {
   fetchedDates(symbol: string, from: string, to: string): string[] {
     return [...(this.fetched.get(symbol) ?? [])].filter((d) => d >= from && d <= to).sort();
   }
-  summary(): { symbol: string; barCount: number; firstDate: string | null; lastDate: string | null }[] {
+  summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[] {
     const symbols = [...new Set([...[...this.bars.values()].map((b) => b.symbol), ...this.fetched.keys()])].sort();
     return symbols.map((symbol) => {
       const dates = [...(this.fetched.get(symbol) ?? [])].sort();
       return {
         symbol,
         barCount: [...this.bars.values()].filter((b) => b.symbol === symbol).length,
+        dayCount: dates.length,
         firstDate: dates[0] ?? null,
         lastDate: dates[dates.length - 1] ?? null,
       };

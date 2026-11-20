@@ -228,14 +228,14 @@ function CredentialsSection({ view, onChange }: SectionProps) {
         body: "{}",
       });
       const data = (await res.json()) as
-        | { ok: true; symbol: string; barStart: string; close: number }
+        | { ok: true; symbol: string; barStart: string; close: number; testSource: boolean }
         | { ok: false; message: string };
       if (!res.ok) throw new Error();
       setCheck(
         data.ok
           ? {
               kind: "ok",
-              text: `接続できました。${data.symbol} の最新の5分足: ${formatEasternDateTime(data.barStart)}(米国東部時間)、終値 $${data.close.toFixed(2)}`,
+              text: `接続できました。${data.symbol} の最新の5分ごとの値動き(5分足): ${formatEasternDateTime(data.barStart)}(米国東部時間)、その5分の最後の値段(終値) $${data.close.toFixed(2)}${data.testSource ? "。テスト用の取得元のため、本物のデータではありません" : ""}`,
             }
           : { kind: "error", text: data.message },
       );

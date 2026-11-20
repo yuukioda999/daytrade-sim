@@ -10,6 +10,7 @@ import type { CredentialsInput } from "@/domain/settings/settings";
  * - 各取引日の通常の取引時間に5分足を作り、前後に時間外の足を1本ずつ足す
  */
 export class FakeMarketData implements MarketDataSource {
+  readonly isTestSource = true;
   readonly calls: { symbol: string; start: Date; end: Date }[] = [];
   private failed = new Set<string>();
 

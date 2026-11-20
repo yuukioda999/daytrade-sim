@@ -21,7 +21,7 @@ describe("AC-006-05: 接続を確かめる", () => {
   it("SOXL の最新の足を1本取り、成功を返す", async () => {
     repos.credentials.save(CREDS);
     const r = await checkConnection(repos, new FakeMarketData(), NOW);
-    expect(r).toEqual({ ok: true, symbol: "SOXL", barStart: "2026-11-20T16:40:00.000Z", close: 42.5 });
+    expect(r).toEqual({ ok: true, symbol: "SOXL", barStart: "2026-11-20T16:40:00.000Z", close: 42.5, testSource: true });
   });
 
   it("キーが違えば失敗を返す。画面に出す言葉にもログにもキーを出さない", async () => {
@@ -68,6 +68,59 @@ describe("AC-006-09: 期間を選んで4銘柄の足を取り、保存する", (
   it("期間が違えば、どこが違うかを返す", () => {
     const r = planHistoricalImport(repos, { from: "2026-11-02", to: "2026-11-20" }, NOW);
     expect(r).toEqual({ ok: false, errors: { to: expect.stringContaining("昨日") } });
+  });
+});
+
+describe("取得元が返した足の確かめ", () => {
+  it("頼んだ銘柄と違う足が混ざっていても、頼んだ銘柄の足だけを保存する", async () => {
+    repos.credentials.save(CREDS);
+    const source = new FakeMarketData();
+    const original = source.fetchBars.bind(source);
+    vi.spyOn(source, "fetchBars").mockImplementation(async (c, symbol, start, end) => {
+      const own = await original(c, symbol, start, end);
+      const other = await original(c, "TQQQ", start, end);
+      return [...own, ...other];
+    });
+    const r = await importChunk(repos, source, { symbol: "SOXL", from: "2026-11-02", to: "2026-11-02" }, NOW);
+    expect(r).toEqual({ ok: true, received: 78, saved: 78 });
+    expect([...(repos.bars as MemoryBarRepository).bars.values()].every((b) => b.symbol === "SOXL")).toBe(true);
+  });
+
+  it("夏時間が始まる日(2026-03-09 の週)をまたぐ1回分でも、各日 78本(9:30 から 15:55)", async () => {
+    repos.credentials.save(CREDS);
+    const r = await importChunk(repos, new FakeMarketData(), { symbol: "SOXL", from: "2026-03-06", to: "2026-03-09" }, NOW);
+    // 3/6(金、冬時間)と 3/9(月、夏時間)
+    expect(r).toEqual({ ok: true, received: 156, saved: 156 });
+    const starts = [...(repos.bars as MemoryBarRepository).bars.values()].map((b) => b.start.toISOString()).sort();
+    expect(starts[0]).toBe("2026-03-06T14:30:00.000Z");
+    expect(starts[78]).toBe("2026-03-09T13:30:00.000Z");
+  });
+});
+
+describe("AC-006-11: 1回分が0本の時は失敗にして、取り直せるようにする(SPEC-006 決めたこと 12)", () => {
+  it("取引日があるのに1本も返らない時は、取り終えたと記録せず、失敗を返す", async () => {
+    repos.credentials.save(CREDS);
+    const source = new FakeMarketData();
+    vi.spyOn(source, "fetchBars").mockResolvedValue([]);
+    const chunk = { symbol: "SOXL", from: "2026-11-02", to: "2026-11-03" };
+    expect(await importChunk(repos, source, chunk, NOW)).toEqual({
+      ok: false,
+      reason: "failed",
+      message: expect.stringContaining("1本も受け取れませんでした"),
+    });
+    expect(repos.bars.fetchedDates("SOXL", "2026-11-01", "2026-11-30")).toEqual([]);
+  });
+
+  it("一部の日だけ0本の時は、取れた分を保存して、すべての日を取り終えたと記録する", async () => {
+    repos.credentials.save(CREDS);
+    const source = new FakeMarketData();
+    const original = source.fetchBars.bind(source);
+    vi.spyOn(source, "fetchBars").mockImplementation(async (c, symbol, start, end) =>
+      (await original(c, symbol, start, end)).filter((b) => b.start.toISOString().startsWith("2026-11-02")),
+    );
+    const r = await importChunk(repos, source, { symbol: "SOXL", from: "2026-11-02", to: "2026-11-03" }, NOW);
+    expect(r).toEqual({ ok: true, received: 78, saved: 78 });
+    expect(repos.bars.fetchedDates("SOXL", "2026-11-01", "2026-11-30")).toEqual(["2026-11-02", "2026-11-03"]);
   });
 });
 

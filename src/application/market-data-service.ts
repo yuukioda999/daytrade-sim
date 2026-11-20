@@ -15,6 +15,8 @@ import { MarketDataError, type MarketDataErrorKind, type MarketDataSource, type 
 /** 接続の確かめに使う銘柄(SPEC-006 AC-006-05) */
 const CHECK_SYMBOL = "SOXL";
 
+export const EMPTY_CHUNK_MESSAGE = "Alpaca から値動きを1本も受け取れませんでした。時間をおいて、もう一度取ってください";
+
 export const NO_CREDENTIALS_MESSAGE = "接続用キーが未設定です。先にキーを保存してください";
 
 /** 取得に失敗した時に画面に出す言葉。キーや応答の本文は入れない(AC-006-05) */
@@ -39,7 +41,7 @@ function logFailure(kind: MarketDataErrorKind): void {
 }
 
 export type ConnectionCheckResult =
-  | { ok: true; symbol: string; barStart: string; close: number }
+  | { ok: true; symbol: string; barStart: string; close: number; testSource: boolean }
   | { ok: false; message: string };
 
 /** 接続を確かめる。SOXL の最新の5分足を1本取る(AC-006-05) */
@@ -53,7 +55,13 @@ export async function checkConnection(
   try {
     const bar = await source.latestBar(credentials, CHECK_SYMBOL, now);
     if (!bar) return { ok: false, message: "接続できましたが、SOXL の足を受け取れませんでした" };
-    return { ok: true, symbol: CHECK_SYMBOL, barStart: bar.start.toISOString(), close: bar.close };
+    return {
+      ok: true,
+      symbol: CHECK_SYMBOL,
+      barStart: bar.start.toISOString(),
+      close: bar.close,
+      testSource: source.isTestSource,
+    };
   } catch (e) {
     if (e instanceof MarketDataError) {
       logFailure(e.kind);
@@ -101,6 +109,12 @@ export async function importChunk(
   try {
     const bars = await source.fetchBars(credentials, chunk.symbol, first.open, last.close);
     const regular = regularSessionBars(bars.filter((b) => b.symbol === chunk.symbol));
+    // 取引日があるのに1本も返らない時は、一時的なデータの欠けかもしれないので、取り終えたと記録しない
+    // (SPEC-006 決めたこと 12。2026-11-20 に人間が採用)
+    if (regular.length === 0) {
+      logFailure("bad-response");
+      return { ok: false, reason: "failed", message: EMPTY_CHUNK_MESSAGE };
+    }
     const saved = repos.bars.saveBars(regular);
     // 足を保存してから、取り終えた日として記録する(途中で止まっても、次は取り直す側に倒れる)
     repos.bars.markFetched(chunk.symbol, days);

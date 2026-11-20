@@ -55,8 +55,8 @@ describe.each(IMPLEMENTATIONS)("%s の保存先", (_, create) => {
       ]),
     ).toBe(2);
     expect(bars.summary()).toEqual([
-      { symbol: "SOXL", barCount: 3, firstDate: null, lastDate: null },
-      { symbol: "TQQQ", barCount: 1, firstDate: null, lastDate: null },
+      { symbol: "SOXL", barCount: 3, dayCount: 0, firstDate: null, lastDate: null },
+      { symbol: "TQQQ", barCount: 1, dayCount: 0, firstDate: null, lastDate: null },
     ]);
   });
 
@@ -67,8 +67,8 @@ describe.each(IMPLEMENTATIONS)("%s の保存先", (_, create) => {
     bars.markFetched("TQQQ", ["2026-11-02"]);
     expect(bars.fetchedDates("SOXL", "2026-11-03", "2026-11-30")).toEqual(["2026-11-03", "2026-11-04"]);
     expect(bars.summary()).toEqual([
-      { symbol: "SOXL", barCount: 0, firstDate: "2026-11-02", lastDate: "2026-11-04" },
-      { symbol: "TQQQ", barCount: 0, firstDate: "2026-11-02", lastDate: "2026-11-02" },
+      { symbol: "SOXL", barCount: 0, dayCount: 3, firstDate: "2026-11-02", lastDate: "2026-11-04" },
+      { symbol: "TQQQ", barCount: 0, dayCount: 1, firstDate: "2026-11-02", lastDate: "2026-11-02" },
     ]);
   });
 

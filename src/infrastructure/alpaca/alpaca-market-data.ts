@@ -22,12 +22,13 @@ const LATEST_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
 
 const barSchema = z.object({
   t: z.string(),
-  o: z.number(),
-  h: z.number(),
-  l: z.number(),
-  c: z.number(),
-  v: z.number(),
-  vw: z.number().optional(),
+  // 価格と取引量は負にならない。形が違う応答は保存しない
+  o: z.number().nonnegative(),
+  h: z.number().nonnegative(),
+  l: z.number().nonnegative(),
+  c: z.number().nonnegative(),
+  v: z.number().nonnegative(),
+  vw: z.number().nonnegative().optional(),
 });
 
 const responseSchema = z.object({
@@ -38,6 +39,8 @@ const responseSchema = z.object({
 type Fetch = typeof fetch;
 
 export class AlpacaMarketData implements MarketDataSource {
+  readonly isTestSource = false;
+
   constructor(private readonly fetchImpl: Fetch = fetch) {}
 
   async fetchBars(credentials: CredentialsInput, symbol: string, start: Date, end: Date): Promise<SymbolBar[]> {
@@ -52,6 +55,8 @@ export class AlpacaMarketData implements MarketDataSource {
         end: new Date(end.getTime() - 1).toISOString(),
         limit: String(PAGE_LIMIT),
         feed: "sip",
+        // 株式分割などの調整をしない値。自動売買(T9)がためる今日の値と同じ形にし、保存した値があとで変わらないようにする。
+        // 分割のあと最大20取引日は、取引量の条件(過去20日の同じ時刻との比べ)がずれる(SPEC-006 決めたこと 11)
         adjustment: "raw",
         sort: "asc",
       });

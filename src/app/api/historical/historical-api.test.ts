@@ -65,7 +65,7 @@ describe("過去データの API", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, received: 156, saved: 156 });
     const summary = await (await getSummary(request("/api/historical"))).json();
-    expect(summary.symbols).toEqual([{ symbol: "SOXL", barCount: 156, firstDate: "2026-11-02", lastDate: "2026-11-03" }]);
+    expect(summary.symbols).toEqual([{ symbol: "SOXL", barCount: 156, dayCount: 2, firstDate: "2026-11-02", lastDate: "2026-11-03" }]);
   });
 
   it("期間が違えば 422 で、どこが違うかを返す", async () => {
@@ -86,5 +86,23 @@ describe("過去データの API", () => {
     const res = await postImport(request("/api/historical/import", { symbol: "AAPL", from: "2026-11-02", to: "2026-11-03" }));
     expect(res.status).toBe(422);
     expect(source.calls).toEqual([]);
+  });
+});
+
+describe("過去データの API も、別のサイトの画面や別の名前からは呼べない(T8 のセキュリティレビュー 3)", () => {
+  const chunk = { symbol: "SOXL", from: "2026-11-02", to: "2026-11-03" };
+  it.each([
+    ["Origin が別のサイト", { origin: "https://evil.example.com" }],
+    ["Sec-Fetch-Site が cross-site", { "sec-fetch-site": "cross-site" }],
+    ["Host が localhost 以外", { host: "evil.example.com" }],
+  ])("%s なら、計画も取得も 403 で、Alpaca 側を呼ばない", async (_, headers) => {
+    repos.credentials.save(CREDS);
+    expect((await postPlan(request("/api/historical/plan", { from: "2026-11-02", to: "2026-11-03" }, headers))).status).toBe(403);
+    expect((await postImport(request("/api/historical/import", chunk, headers))).status).toBe(403);
+    expect(source.calls).toEqual([]);
+  });
+
+  it("保存している様子の読み込みも、Host が localhost 以外なら 403", async () => {
+    expect((await getSummary(request("/api/historical", undefined, { host: "evil.example.com" }))).status).toBe(403);
   });
 });

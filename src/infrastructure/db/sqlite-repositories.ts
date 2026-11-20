@@ -127,7 +127,7 @@ export class SqliteBarRepository implements BarRepository {
       .map((r) => r.date);
   }
 
-  summary(): { symbol: string; barCount: number; firstDate: string | null; lastDate: string | null }[] {
+  summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[] {
     const counts = this.db
       .select({ symbol: bars.symbol, barCount: sql<number>`count(*)` })
       .from(bars)
@@ -136,6 +136,7 @@ export class SqliteBarRepository implements BarRepository {
     const days = this.db
       .select({
         symbol: fetchedDays.symbol,
+        dayCount: sql<number>`count(*)`,
         firstDate: sql<string>`min(${fetchedDays.date})`,
         lastDate: sql<string>`max(${fetchedDays.date})`,
       })
@@ -148,6 +149,7 @@ export class SqliteBarRepository implements BarRepository {
       return {
         symbol,
         barCount: counts.find((c) => c.symbol === symbol)?.barCount ?? 0,
+        dayCount: d?.dayCount ?? 0,
         firstDate: d?.firstDate ?? null,
         lastDate: d?.lastDate ?? null,
       };

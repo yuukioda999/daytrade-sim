@@ -5,12 +5,12 @@ import type { ImportChunk, RangeErrors } from "@/domain/history/import-plan";
 import { WATCHLIST } from "@/domain/market/symbols";
 import { formatDateJa } from "./format";
 
-type Summary = { symbol: string; barCount: number; firstDate: string | null; lastDate: string | null };
+type Summary = { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null };
 type Failure = { chunk: ImportChunk; message: string };
 type RunState =
   | { status: "idle" }
   | { status: "running"; done: number; total: number; current: ImportChunk }
-  | { status: "finished"; total: number; saved: number; failures: Failure[]; stopped: boolean };
+  | { status: "finished"; total: number; done: number; saved: number; failures: Failure[]; stopped: boolean };
 
 async function postJson(path: string, body: unknown): Promise<{ status: number; data: unknown }> {
   const res = await fetch(path, {
@@ -32,7 +32,18 @@ function yesterdayEastern(): string {
 }
 
 function chunkLabel(c: ImportChunk): string {
-  return `${c.symbol} ${formatDateJa(c.from)}から${formatDateJa(c.to)}`;
+  return `${c.symbol} ${formatDateJa(c.from, { withYear: true })}から${formatDateJa(c.to, { withYear: true })}`;
+}
+
+function statusText(run: RunState): string {
+  if (run.status === "idle") return "";
+  if (run.status === "running") {
+    return `${run.done} / ${run.total} 回を取得しました。今は ${chunkLabel(run.current)} を取っています`;
+  }
+  if (run.total === 0) return "この期間はすべて取得済みです";
+  const got = run.done - run.failures.length;
+  const head = run.stopped ? `止めました。残りの ${run.total - run.done} 回は取っていません(もう一度始めると続きから取ります)。` : "";
+  return `${head}${got} / ${run.total} 回を取得し、新しく ${run.saved.toLocaleString("ja-JP")} 本の値動きを保存しました`;
 }
 
 /**
@@ -51,6 +62,10 @@ export function HistoricalSection({ configured }: { configured: boolean }) {
   const [run, setRun] = useState<RunState>({ status: "idle" });
   const [message, setMessage] = useState<string | null>(null);
   const stopRequested = useRef(false);
+  // 最後に計画した期間。「もう一度取る」は入力欄ではなく、この期間で取り直す(T8 のレビュー 9)
+  const lastRange = useRef<{ from: string; to: string } | null>(null);
+  // 終わった時に結果の欄へフォーカスを移す(押したボタンが消えるため。T8 のレビュー 8)
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   // 保存している様子を読み直す合図。取得が終わるたびに増やす
   const [summaryVersion, setSummaryVersion] = useState(0);
@@ -72,13 +87,13 @@ export function HistoricalSection({ configured }: { configured: boolean }) {
     };
   }, [summaryVersion]);
 
-  const start = async (e?: FormEvent) => {
-    e?.preventDefault();
+  const runImport = async (range: { from: string; to: string }) => {
     setMessage(null);
     stopRequested.current = false;
+    lastRange.current = range;
     let chunks: ImportChunk[];
     try {
-      const { status, data } = await postJson("/api/historical/plan", { from, to });
+      const { status, data } = await postJson("/api/historical/plan", range);
       if (status === 422) {
         setErrors((data as { errors: RangeErrors }).errors);
         return;
@@ -90,30 +105,30 @@ export function HistoricalSection({ configured }: { configured: boolean }) {
       setMessage("取得を始められませんでした");
       return;
     }
-    if (chunks.length === 0) {
-      setRun({ status: "finished", total: 0, saved: 0, failures: [], stopped: false });
-      return;
-    }
     let saved = 0;
+    let done = 0;
     const failures: Failure[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-      if (stopRequested.current) {
-        setRun({ status: "finished", total: i, saved, failures, stopped: true });
-        loadSummary();
-        return;
-      }
-      setRun({ status: "running", done: i, total: chunks.length, current: chunks[i] });
+    for (const chunk of chunks) {
+      if (stopRequested.current) break;
+      setRun({ status: "running", done, total: chunks.length, current: chunk });
       try {
-        const { status, data } = await postJson("/api/historical/import", chunks[i]);
+        const { status, data } = await postJson("/api/historical/import", chunk);
         const result = data as { ok: boolean; saved?: number; message?: string };
         if (status === 200 && result.ok) saved += result.saved ?? 0;
-        else failures.push({ chunk: chunks[i], message: result.message ?? "取得できませんでした" });
+        else failures.push({ chunk, message: result.message ?? "取得できませんでした" });
       } catch {
-        failures.push({ chunk: chunks[i], message: "サーバーに接続できませんでした" });
+        failures.push({ chunk, message: "サーバーに接続できませんでした" });
       }
+      done++;
     }
-    setRun({ status: "finished", total: chunks.length, saved, failures, stopped: false });
+    setRun({ status: "finished", total: chunks.length, done, saved, failures, stopped: done < chunks.length });
     loadSummary();
+    requestAnimationFrame(() => statusRef.current?.focus());
+  };
+
+  const start = (e: FormEvent) => {
+    e.preventDefault();
+    void runImport({ from, to });
   };
 
   const running = run.status === "running";
@@ -124,17 +139,18 @@ export function HistoricalSection({ configured }: { configured: boolean }) {
         過去データの取得
       </h2>
       <p className="text-sm text-fg-muted">
-        Alpaca から4銘柄(SOXL、TQQQ、TSLL、NVDL)の5分足を取って保存します。期間は最大1年、終わりは昨日(米国東部時間)までです。取得中にこの画面を閉じると止まります。もう一度始めると、取り終えた分を飛ばして続きから取ります。
+        Alpaca から4銘柄(SOXL、TQQQ、TSLL、NVDL)の5分ごとの値動き<span className="text-[11px]">(5分足)</span>を取って保存します。期間は最大1年、終わりは昨日(米国東部時間)までです。取得中にこの画面を閉じると止まります。もう一度始めると、取り終えた分を飛ばして続きから取ります。
       </p>
 
       {summary && summary.length > 0 && (
         <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="保存している過去データ(横に動かせます)">
-          <table className="w-full min-w-[420px] text-left text-sm tabular-nums whitespace-nowrap" data-testid="historical-summary">
+          <table className="w-full min-w-[560px] text-left text-sm tabular-nums whitespace-nowrap" data-testid="historical-summary">
             <thead>
               <tr className="border-b text-xs text-fg-muted">
                 <th scope="col" className="p-2 font-medium">銘柄</th>
-                <th scope="col" className="p-2 text-right font-medium">保存している足</th>
-                <th scope="col" className="p-2 font-medium">取り終えた期間</th>
+                <th scope="col" className="p-2 text-right font-medium">保存している値動き</th>
+                <th scope="col" className="p-2 text-right font-medium">取り終えた日</th>
+                <th scope="col" className="p-2 font-medium">その範囲</th>
               </tr>
             </thead>
             <tbody>
@@ -142,8 +158,11 @@ export function HistoricalSection({ configured }: { configured: boolean }) {
                 <tr key={s.symbol} className="border-b border-muted">
                   <th scope="row" className="p-2 font-semibold">{s.symbol}</th>
                   <td className="p-2 text-right">{s.barCount.toLocaleString("ja-JP")}本</td>
+                  <td className="p-2 text-right">{s.dayCount.toLocaleString("ja-JP")}日</td>
                   <td className="p-2">
-                    {s.firstDate && s.lastDate ? `${formatDateJa(s.firstDate)}から${formatDateJa(s.lastDate)}` : "なし"}
+                    {s.firstDate && s.lastDate
+                      ? `${formatDateJa(s.firstDate, { withYear: true })}から${formatDateJa(s.lastDate, { withYear: true })}`
+                      : "なし"}
                   </td>
                 </tr>
               ))}
@@ -184,49 +203,40 @@ export function HistoricalSection({ configured }: { configured: boolean }) {
       )}
 
       {run.status === "running" && (
-        <div className="flex flex-col gap-1">
-          <progress
-            className="h-2 w-full accent-[var(--color-accent)]"
-            max={run.total}
-            value={run.done}
-            aria-label="過去データの取得の進み具合"
-          />
-          <p role="status" className="text-sm tabular-nums" data-testid="historical-progress">
-            {run.done} / {run.total} 回を取得しました。今は {chunkLabel(run.current)} を取っています
-          </p>
-        </div>
+        <progress
+          className="h-2 w-full accent-[var(--color-accent)]"
+          max={run.total}
+          value={run.done}
+          aria-label="過去データの取得の進み具合"
+        />
       )}
-
-      {run.status === "finished" && (
-        <div className="flex flex-col gap-2">
-          <p role="status" className="text-sm" data-testid="historical-result">
-            {run.total === 0
-              ? "この期間はすべて取得済みです"
-              : `${run.stopped ? "止めました。" : ""}${run.total - run.failures.length} / ${run.total} 回を取得し、新しく ${run.saved.toLocaleString("ja-JP")} 本の足を保存しました`}
-          </p>
-          {run.failures.length > 0 && (
-            <div role="alert" className="flex flex-col gap-2 rounded-lg border border-down/50 px-3 py-2 text-sm">
-              <p className="font-semibold text-down">取得できなかった期間があります。それまでに取った分は保存しています</p>
-              <ul className="list-disc pl-5" data-testid="historical-failures">
-                {run.failures.map((f) => (
-                  <li key={`${f.chunk.symbol}-${f.chunk.from}`}>
-                    {chunkLabel(f.chunk)}: {f.message}
-                  </li>
-                ))}
-              </ul>
-              <div>
-                <button
-                  type="button"
-                  onClick={() => void start()}
-                  className="min-h-11 rounded-lg border border-input px-4 text-fg"
-                >
-                  取得できなかった期間をもう一度取る
-                </button>
-              </div>
+      {/* 読み上げの欄は最初から置き、中身だけを変える(T8 のレビュー 8) */}
+      <p ref={statusRef} tabIndex={-1} role="status" className="text-sm tabular-nums focus:outline-none" data-testid="historical-status">
+        {statusText(run)}
+      </p>
+      <div role="alert">
+        {run.status === "finished" && run.failures.length > 0 && (
+          <div className="flex flex-col gap-2 rounded-lg border border-down/50 px-3 py-2 text-sm">
+            <p className="font-semibold text-down">取得できなかった期間があります。それまでに取った分は保存しています</p>
+            <ul className="list-disc pl-5" data-testid="historical-failures">
+              {run.failures.map((f) => (
+                <li key={`${f.chunk.symbol}-${f.chunk.from}`}>
+                  {chunkLabel(f.chunk)}: {f.message}
+                </li>
+              ))}
+            </ul>
+            <div>
+              <button
+                type="button"
+                onClick={() => lastRange.current && void runImport(lastRange.current)}
+                className="min-h-11 rounded-lg border border-input px-4 text-fg"
+              >
+                取得できなかった期間をもう一度取る
+              </button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
       {message && (
         <p role="alert" className="text-sm text-down">
           {message}

@@ -35,8 +35,8 @@ export interface BarRepository {
   markFetched(symbol: string, dates: readonly string[]): void;
   /** from から to(両端を含む)のうち、取り終えた日 */
   fetchedDates(symbol: string, from: string, to: string): string[];
-  /** 銘柄ごとの、保存している足の本数と、取り終えた日の最初と最後 */
-  summary(): { symbol: string; barCount: number; firstDate: string | null; lastDate: string | null }[];
+  /** 銘柄ごとの、保存している足の本数と、取り終えた日の数、最初と最後 */
+  summary(): { symbol: string; barCount: number; dayCount: number; firstDate: string | null; lastDate: string | null }[];
 }
 
 export type Repositories = {
@@ -61,6 +61,8 @@ export class MarketDataError extends Error {
 
 /** 市場データの取得元(ADR-0005)。本番は Alpaca、テストは差し替える */
 export interface MarketDataSource {
+  /** 通信しないテスト用の取得元なら true。画面に「本物のデータではない」と出すため */
+  readonly isTestSource: boolean;
   /** start から end(end を含まない)の5分足。時間外の足も含めて返す */
   fetchBars(credentials: CredentialsInput, symbol: string, start: Date, end: Date): Promise<SymbolBar[]>;
   /** now の15分以上前の、最も新しい5分足。なければ null */

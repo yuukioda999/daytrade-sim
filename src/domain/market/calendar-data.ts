@@ -5,8 +5,11 @@
  * 2026-11-19 に確認して写した。年が変わる前に、次の年の分を同じページから足す。
  *
  * 2025 年は、過去データ(最大1年前まで。SPEC-006)のために T8 で足した(2026-11-20)。
- * 出典: NYSE の 2025 年の休場日の発表(2022-12、Business Wire)と、Kiplinger、Fidelity の 2025 年の休場日の一覧。
- * 1月9日はカーター元大統領の国の追悼の日として臨時に休場した(Kiplinger)。そのため 2025 年の休場日は11日ある
+ * 出典: NYSE Group の 2023、2024、2025 年の休場日の発表(Nasdaq.com に載った Business Wire の配信)と、
+ * Kiplinger、Fidelity の 2025 年の休場日の一覧。
+ * 1月9日はカーター元大統領の国の追悼の日として臨時に休場した。出典は NYSE の親会社 ICE の発表
+ * (2024-12-30「The New York Stock Exchange Will Close Markets on January 9 ...」、ir.theice.com)。
+ * そのため 2025 年の休場日は11日ある
  */
 export const COVERED_YEARS: readonly number[] = [2025, 2026, 2027];
 
